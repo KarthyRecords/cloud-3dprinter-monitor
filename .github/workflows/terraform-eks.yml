@@ -1,86 +1,86 @@
-# name: terraform-eks
+name: terraform-eks
 
-# # Pull request touching the stack: terraform plan.
-# # Merge to main touching the stack: terraform plan, then apply after approval
-# # (the apply job uses the "production" environment; add required reviewers in
-# # Settings -> Environments -> production).
-# on:
-#   pull_request:
-#     paths:
-#       - eks-cluster-for-selfhosted-runner/**
-#       - .github/workflows/terraform-eks.yml
-#   push:
-#     branches: [main]
-#     paths:
-#       - eks-cluster-for-selfhosted-runner/**
-#       - .github/workflows/terraform-eks.yml
-#   workflow_dispatch:
+# Pull request touching the stack: terraform plan.
+# Merge to main touching the stack: terraform plan, then apply after approval
+# (the apply job uses the "production" environment; add required reviewers in
+# Settings -> Environments -> production).
+on:
+  pull_request:
+    paths:
+      - eks-cluster-for-selfhosted-runner/**
+      - .github/workflows/terraform-eks.yml
+  push:
+    branches: [main]
+    paths:
+      - eks-cluster-for-selfhosted-runner/**
+      - .github/workflows/terraform-eks.yml
+  workflow_dispatch:
 
-# permissions:
-#   contents: read
+permissions:
+  contents: read
 
-# env:
-#   AWS_REGION: eu-west-1
-#   AWS_DEFAULT_REGION: eu-west-1
-#   TF_IN_AUTOMATION: "true"
-#   TF_INPUT: "false"
+env:
+  AWS_REGION: eu-west-1
+  AWS_DEFAULT_REGION: eu-west-1
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
 
-# defaults:
-#   run:
-#     working-directory: eks-cluster-for-selfhosted-runner
+defaults:
+  run:
+    working-directory: eks-cluster-for-selfhosted-runner
 
-# # one run at a time: two applies must never touch the same state
-# concurrency:
-#   group: terraform-eks
-#   cancel-in-progress: false
+# one run at a time: two applies must never touch the same state
+concurrency:
+  group: terraform-eks
+  cancel-in-progress: false
 
-# jobs:
-#   plan:
-#     runs-on: [self-hosted, infra-runner]
-#     timeout-minutes: 30
-#     steps:
-#       - uses: actions/checkout@v4
+jobs:
+  plan:
+    runs-on: [self-hosted, infra-runner]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
 
-#       - uses: hashicorp/setup-terraform@v3
-#         with:
-#           terraform_wrapper: false
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
 
-#       # the helm and kubectl providers call `aws eks get-token`
-#       - name: Ensure AWS CLI
-#         run: |
-#           if ! command -v aws >/dev/null; then
-#             curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-#             unzip -q /tmp/awscliv2.zip -d /tmp
-#             sudo /tmp/aws/install
-#           fi
-#           aws sts get-caller-identity
+      # the helm and kubectl providers call `aws eks get-token`
+      - name: Ensure AWS CLI
+        run: |
+          if ! command -v aws >/dev/null; then
+            curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+            unzip -q /tmp/awscliv2.zip -d /tmp
+            sudo /tmp/aws/install
+          fi
+          aws sts get-caller-identity
 
-#       - run: terraform fmt -check -recursive
-#       - run: terraform init
-#       - run: terraform validate
-#       - run: terraform plan -lock-timeout=5m
+      - run: terraform fmt -check -recursive
+      - run: terraform init
+      - run: terraform validate
+      - run: terraform plan -lock-timeout=5m
 
-#   apply:
-#     needs: plan
-#     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-#     runs-on: [self-hosted, infra-runner]
-#     timeout-minutes: 60
-#     environment: production
-#     steps:
-#       - uses: actions/checkout@v4
+  apply:
+    needs: plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, infra-runner]
+    timeout-minutes: 60
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
 
-#       - uses: hashicorp/setup-terraform@v3
-#         with:
-#           terraform_wrapper: false
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
 
-#       - name: Ensure AWS CLI
-#         run: |
-#           if ! command -v aws >/dev/null; then
-#             curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-#             unzip -q /tmp/awscliv2.zip -d /tmp
-#             sudo /tmp/aws/install
-#           fi
+      - name: Ensure AWS CLI
+        run: |
+          if ! command -v aws >/dev/null; then
+            curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+            unzip -q /tmp/awscliv2.zip -d /tmp
+            sudo /tmp/aws/install
+          fi
 
-#       - run: terraform init
-#       # re-plans and applies in one step, so the apply matches the current state
-#       - run: terraform apply -auto-approve -lock-timeout=5m
+      - run: terraform init
+      # re-plans and applies in one step, so the apply matches the current state
+      - run: terraform apply -auto-approve -lock-timeout=5m
