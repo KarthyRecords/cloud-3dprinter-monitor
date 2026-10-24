@@ -29,12 +29,24 @@ module "eks" {
     }
   }
 
-  enable_irsa                              = true
-  enable_cluster_creator_admin_permissions = true
+  enable_irsa = true
 
-  # lets the infra-runner pod authenticate to the cluster API (helm/kubectl providers).
-  # The ARN is built by hand because irsa_role depends on this module (it would be a cycle).
+  # Explicit entries only. enable_cluster_creator_admin_permissions would grant admin to
+  # whoever runs terraform, so a laptop run and a CI run fight over the same entry.
+  enable_cluster_creator_admin_permissions = false
+
   access_entries = {
+    terraform_user = {
+      principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/terraform-user"
+      policy_associations = {
+        admin = {
+          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
+
+    # the ARN is built by hand because irsa_role depends on this module (it would be a cycle)
     infra_runner = {
       principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/teracotta-infra-runner"
       policy_associations = {
@@ -45,6 +57,13 @@ module "eks" {
       }
     }
   }
+
+  # fixed list, otherwise the KMS key policy names whoever is running terraform
+  kms_key_administrators = [
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/terraform-user",
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/teracotta-infra-runner",
+  ]
+
   node_security_group_tags = {
     "karpenter.sh/discovery" = "teracotta"
   }
