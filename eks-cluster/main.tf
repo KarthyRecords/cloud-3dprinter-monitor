@@ -4,7 +4,7 @@ module "eks" {
   version = "~> 20.0"
 
   cluster_name    = "teracotta"
-  cluster_version = "1.30"
+  cluster_version = "1.37"
 
   vpc_id     = data.aws_vpc.main.id
   subnet_ids = [data.aws_subnet.subnet1.id, data.aws_subnet.subnet2.id]
