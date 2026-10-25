@@ -1,1 +1,0 @@
-###github_token = data.aws_ssm_parameter.github_token.value
