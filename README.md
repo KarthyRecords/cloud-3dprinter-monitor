@@ -10,23 +10,23 @@ AWS EKS cluster built with Terraform, with GitHub Actions self-hosted runners on
 <!-- STATUS:START -->
 **Goal:** Goal not stated yet, add it to docs/status-notes.md  
 
-**Where I am now:** The repository now includes EKS cluster Terraform configuration, NAT egress for cluster subnets, DNS hostnames enabled for the VPC, and a repo‑agent integration with associated workflows and CODEOWNER. Recent work has focused on merging the repo‑agent feature and fixing the README status.  
+**Where I am now:** The repository now contains CI workflows for runners, an EKS cluster configured for self‑hosted runners, and recent fixes to the repo‑agent code. The infrastructure is being prepared but core application deployment is not yet in place.  
 
 **In progress**
-- Integrating the repo agent (multiple PR merges #3‑#8)  
-- Updating the README status file  
+- Adding runner workflow for infra‑runner and app‑runner.  
+- Setting up the EKS cluster to host self‑hosted runners.  
+- Applying fixes to the repo‑agent implementation.  
 
 **Up next**
-- Bootstrap: remote state in S3  
-- Apply network and EKS cluster from the pipeline  
-- Deploy runners (infra‑runner, app‑runner) with separate IAM roles  
-- Build and push the app image to ECR  
+- Apply network configuration and provision the EKS cluster via the pipeline.  
+- Deploy runners (infra‑runner, app‑runner) with separate IAM roles.  
+- Build the application image and push it to ECR.  
 
 **Done recently**
-- Add repo agent (PR #8)  
-- Merge pull request #
+- Added runner workflow to the repository.  
+- Configured EKS cluster for self‑hosted runner usage
 
-_Last updated by the status agent on 2026-10-24 using openai/gpt-oss-120b._
+_Last updated by the status agent on 2026-10-25 using openai/gpt-oss-120b._
 <!-- STATUS:END -->
 
 ## Architecture
