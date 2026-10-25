@@ -114,7 +114,7 @@ def main():
         print("--- model output ---\n" + reply)
         sys.exit(1)
     _base, _key, model = llm.settings()
-    footer = "_Last updated by the status agent on %s using %s._" % (datetime.date.today().isoformat(), model)
+    footer = "_This READ ME was last updated by the status agent on %s using %s._" % (datetime.date.today().isoformat(), model)
     updated = head + "\n" + reply + "\n\n" + footer + "\n" + tail
     if dry_run:
         print(updated)
