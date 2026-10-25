@@ -1,0 +1,5 @@
+name: printer_monitor_aws_v1
+description: "aws_v1: printer, vibration and camera to AWS IoT Core + local web page on port 7001"
+ports:
+  - 7001
+icon: 📈

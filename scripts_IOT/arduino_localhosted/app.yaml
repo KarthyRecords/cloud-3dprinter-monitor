@@ -1,0 +1,5 @@
+name: printer_monitor_v13
+description: "v13: printer serial data (via ch340_bridge), dual ADXL345 vibration, camera on a web page, port 7001"
+ports:
+  - 7001
+icon: 📈

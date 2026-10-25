@@ -1,0 +1,32 @@
+{
+  "_comment": "Fill in endpoint (AWS IoT Core > Settings > Device data endpoint) and put the 3 cert files in certs/. client_id must match the IoT policy.",
+  "enabled": true,
+  "dry_run": false,
+  "endpoint": "REPLACE-ME-ats.iot.eu-west-2.amazonaws.com",
+  "port": 8883,
+  "client_id": "kobra2neo-unoq",
+  "device_id": "kobra2neo",
+  "topic_prefix": "printer/kobra",
+  "ca_cert": "certs/AmazonRootCA1.pem",
+  "cert": "certs/device.pem.crt",
+  "key": "certs/private.pem.key",
+  "keepalive_s": 30,
+  "telemetry_interval_s": 2,
+  "vibration_interval_s": 2,
+  "stale_after_s": 10,
+  "raw_accel": true,
+  "raw_block_s": 1.0,
+  "snapshot_interval_s": 30,
+  "snapshot_max_kb": 120,
+  "snapshot_max_width": 1280,
+  "sensor_names": [
+    "table",
+    "toolhead"
+  ],
+  "queue": {
+    "db_path": "aws_queue.db",
+    "max_rows": 200000
+  },
+  "max_inflight": 20,
+  "ack_timeout_s": 30
+}

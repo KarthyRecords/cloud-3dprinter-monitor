@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Printer Monitor</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #d7dce4;
+    --muted: #8a93a3; --ok: #3fb950; --bad: #f85149; --warn: #d29922;
+    --x: #f0705a; --y: #5bc27a; --z: #5aa2f0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+           padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 600; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+  .dot.ok { background: var(--ok); }
+  .num { font-variant-numeric: tabular-nums; color: var(--text); }
+  .spacer { flex: 1; }
+  button, select { background: #222734; color: var(--text); border: 1px solid #343b4a;
+                   border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
+  button:hover, select:hover { border-color: #4a5366; }
+  label.chk { color: var(--muted); display: inline-flex; gap: 5px; align-items: center; }
+  main { display: grid; gap: 14px; padding: 14px 16px;
+         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  @media (max-width: 1000px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 12px 14px; min-width: 0; }
+  .card h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; display: flex;
+             align-items: baseline; gap: 10px; }
+  .card h2 small { color: var(--muted); font-weight: 400; }
+  .cam { position: relative; background: #000; border-radius: 8px; overflow: hidden;
+         aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; }
+  .cam img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam .msg { position: absolute; inset: 0; display: none; align-items: center;
+              justify-content: center; text-align: center; padding: 20px; color: var(--muted); }
+  .cam.off .msg { display: flex; }
+  .cam.off img { visibility: hidden; }
+  code { background: #222734; padding: 1px 5px; border-radius: 4px; }
+  .sensors { display: grid; gap: 14px; }
+  .stat .v.small { font-size: 13px; }
+  .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 8px; }
+  .stat { background: #12151b; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  .stat .k { font-size: 11px; color: var(--muted); }
+  .stat .v { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .stat .f { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .k.x { color: var(--x); } .k.y { color: var(--y); } .k.z { color: var(--z); }
+  canvas { width: 100%; display: block; }
+  canvas.trace { height: 150px; }
+  canvas.psd { height: 170px; margin-top: 6px; }
+  .missing { color: var(--muted); padding: 30px 0; text-align: center; display: none; }
+  .card.absent .missing { display: block; }
+  .card.absent .body { display: none; }
+  footer { color: var(--muted); font-size: 12px; padding: 0 16px 16px; }
+  .span2 { grid-column: 1 / -1; }
+  .alerts { margin: 10px 16px 0; padding: 8px 12px; border: 1px solid #5a3a12; background: #2a1d0c;
+            color: #f0c674; border-radius: 8px; display: none; font-size: 13px; }
+  .alerts.on { display: block; }
+  .pstate { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+  .pstate .big { font-size: 17px; font-weight: 600; }
+  .file { color: var(--muted); font-size: 12px; word-break: break-all; margin-top: 2px; }
+  .bar { height: 8px; background: #12151b; border: 1px solid var(--line); border-radius: 5px;
+         overflow: hidden; margin: 8px 0 10px; }
+  .bar > div { height: 100%; background: var(--z); width: 0; transition: width .5s; }
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+  table.kv { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  table.kv td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; word-break: break-word; }
+  table.kv td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
+  table.pos { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  table.pos th, table.pos td { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--line); }
+  table.pos th { color: var(--muted); font-weight: 400; }
+  table.pos td:first-child, table.pos th:first-child { text-align: left; color: var(--muted); }
+  .lamps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .lamp { display: inline-flex; align-items: center; gap: 6px; background: #12151b; border: 1px solid var(--line);
+          border-radius: 12px; padding: 3px 9px; font-size: 12px; }
+  .lamp i { width: 8px; height: 8px; border-radius: 50%; background: #5a606c; display: inline-block; }
+  .lamp.ok i { background: var(--ok); } .lamp.warn i { background: var(--warn); }
+  .lamp.bad i { background: var(--bad); } .lamp.info i { background: var(--z); }
+  canvas.temp { height: 210px; } canvas.pwm { height: 150px; margin-top: 10px; } canvas.path { height: 340px; } canvas.mesh { height: 250px; }
+  pre.log { max-height: 340px; overflow: auto; background: #0b0d11; border: 1px solid var(--line);
+            border-radius: 6px; padding: 8px; margin: 8px 0 0; color: #b8c0cc; white-space: pre-wrap;
+            font: 12px/1.35 ui-monospace, Consolas, monospace; }
+  details summary { cursor: pointer; color: var(--muted); }
+  .seg { display: inline-flex; gap: 4px; margin-left: auto; }
+  .seg button { padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+  .card h2 { flex-wrap: wrap; }
+  .seg button.on { border-color: var(--z); color: #fff; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend span::before { content: ""; display: inline-block; width: 16px; height: 2px; vertical-align: middle;
+                         margin-right: 5px; background: var(--c); }
+  .legend span.dash::before { background: repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 7px); }
+  .muted { color: var(--muted); }
+  .warn { color: var(--warn); }
+  .camclock { position: absolute; right: 8px; bottom: 6px; font: 12px/1 ui-monospace, Consolas, monospace;
+              color: #fff; background: rgba(0,0,0,.45); padding: 3px 6px; border-radius: 4px; display: none; }
+  .pathbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: -2px 0 6px; font-size: 12px; }
+  .pathbar .seg { margin-left: 0; }
+  @media (max-width: 1000px) { .span2 { grid-column: auto; } }
+  @media (max-width: 600px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                              canvas.path { height: 300px; } }
+  @media (max-width: 600px) {
+    .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .stat.wide { grid-column: span 2; }
+    main { padding: 12px; } header { padding: 10px 12px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Printer Monitor</h1>
+  <span class="pill"><span id="linkDot" class="dot"></span><span id="linkTxt">connecting</span></span>
+  <span class="pill"><span id="prDot" class="dot"></span><span id="prTxt">printer: -</span></span>
+  <span class="pill">ODR <span id="odr" class="num">-</span> Hz</span>
+  <span class="pill">msgs/s <span id="bps" class="num">-</span></span>
+  <span class="pill">lost <span id="lost" class="num">0</span></span>
+  <span class="pill">viewers <span id="viewers" class="num">-</span></span>
+  <span class="spacer"></span>
+  <label class="chk"><input type="checkbox" id="demean" checked> remove mean</label>
+  <button id="pause">Pause</button>
+  <select id="capLen" title="CSV length">
+    <option value="5">5 s</option><option value="10" selected>10 s</option>
+    <option value="30">30 s</option><option value="60">60 s</option>
+  </select>
+  <button id="csv">Accel CSV</button>
+  <select id="prLen" title="Printer CSV length">
+    <option value="15">15 min</option><option value="60" selected>1 h</option>
+    <option value="0">all (4 h)</option>
+  </select>
+  <button id="prCsv">Printer CSV</button>
+</header>
+<div id="alerts" class="alerts"></div>
+
+<main>
+  <section class="card">
+    <h2>Camera <small id="camInfo"></small>
+      <span class="seg" id="camRes"><button data-m="480">480p</button><button data-m="720">720p</button><button data-m="1080">1080p</button></span></h2>
+    <div id="cam" class="cam">
+      <img id="camImg" alt="printer camera">
+      <div class="camclock" id="camClock"></div>
+      <div class="msg"><div>Camera not available.<br><br>
+        <span id="camWhy">waiting for the app&hellip;</span><br><br>
+        <small>Fallback: <code>python3 cam_stream.py</code> on the board (port 8080)</small></div></div>
+    </div>
+  </section>
+
+  <section class="card" id="prCard">
+    <h2>Printer <small id="prPort"></small></h2>
+    <div class="pstate"><span class="big" id="pState">&mdash;</span><span class="muted" id="pConn"></span></div>
+    <div class="file" id="pFile"></div>
+    <div class="bar"><div id="pBar"></div></div>
+    <div class="tiles" id="pTiles"></div>
+    <table class="pos" id="pPos"></table>
+    <div class="lamps" id="pLamps"></div>
+  </section>
+
+  <section class="card">
+    <h2>Temperatures &amp; heater power
+      <span class="seg" id="tWin"><button data-m="5">5 min</button><button data-m="15" class="on">15 min</button><button data-m="60">1 h</button></span></h2>
+    <canvas class="temp" id="tempC"></canvas>
+    <div class="legend">
+      <span style="--c:#f0a35a">hotend</span><span class="dash" style="--c:#f0a35a">target</span>
+      <span style="--c:#5aa2f0">bed</span><span class="dash" style="--c:#5aa2f0">target</span>
+    </div>
+    <canvas class="pwm" id="pwmC"></canvas>
+    <div class="legend">
+      <span style="--c:#f0a35a">hotend heater</span><span style="--c:#5aa2f0">bed heater</span>
+      <span class="muted" id="pwmNow"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Nozzle path <small>top view, motor position, coloured by Z</small>
+      <span class="seg" id="pathWin"><button data-m="1">1 min</button><button data-m="5" class="on">5 min</button><button data-m="20">20 min</button></span></h2>
+    <div class="pathbar"><span class="muted">M114 rate</span>
+      <span class="seg" id="posHz"><button data-m="2">2</button><button data-m="5">5</button><button data-m="8">8</button><button data-m="15">15 Hz</button></span>
+      <span id="posStat" class="muted"></span></div>
+    <canvas class="path" id="pathC"></canvas>
+  </section>
+
+  <div class="card" id="card0">
+    <h2>Table <small>ADXL345 #1 &middot; 0x53</small></h2>
+    <div class="missing">Sensor not streaming</div>
+    <div class="body">
+      <div class="stats" id="stats0"></div>
+      <canvas class="trace" id="trace0"></canvas>
+      <canvas class="psd" id="psd0"></canvas>
+    </div>
+  </div>
+  <div class="card" id="card1">
+    <h2>Toolhead <small>ADXL345 #2 &middot; 0x1D</small></h2>
+    <div class="missing">Sensor not streaming</div>
+    <div class="body">
+      <div class="stats" id="stats1"></div>
+      <canvas class="trace" id="trace1"></canvas>
+      <canvas class="psd" id="psd1"></canvas>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>Bed mesh <small id="meshInfo">M420 V</small></h2>
+    <canvas class="mesh" id="meshC"></canvas>
+    <table class="kv" id="meshStats"></table>
+  </section>
+
+  <section class="card">
+    <h2>Settings <small>M115 / M503 / M412 / M211 / M290</small></h2>
+    <table class="kv" id="setTbl"></table>
+    <div id="sdFiles"></div>
+  </section>
+
+  <section class="card span2">
+    <details id="logBox"><summary>Serial log <span class="muted" id="logInfo"></span></summary>
+      <pre class="log" id="logPre"></pre>
+    </details>
+  </section>
+</main>
+<footer>
+  Traces: last 2 s. Grms / peak over the same 2 s, mean removed per axis.
+  PSD: Welch, Hann window, 50% overlap, last 4 s, one-sided g&sup2;/Hz.
+  "PSD Grms" is &radic;&int;PSD df &mdash; it should match the time-domain Grms.
+  Dashed lines on the PSDs: input shaper frequencies from M593 (printer X/Y; sensor axes may be oriented differently).
+  Printer data is read-only (query commands only), as in phase 1.
+</footer>
+
+<script>
+"use strict";
+const G_PER_LSB = 0.0039, CAP = 8 * 800;
+const COLORS = { x: "#f0705a", y: "#5bc27a", z: "#5aa2f0" };
+const AXES = ["x", "y", "z"];
+
+// ------------------------------------------------------------ data store
+class Ring {
+  constructor(n) { this.n = n; this.d = AXES.map(() => new Float32Array(n)); this.head = 0; this.len = 0; }
+  push(x, y, z) {
+    this.d[0][this.head] = x; this.d[1][this.head] = y; this.d[2][this.head] = z;
+    this.head = (this.head + 1) % this.n; if (this.len < this.n) this.len++;
+  }
+  last(m) {                     // -> [Float32Array x, y, z] of the newest m samples
+    m = Math.min(m, this.len);
+    const out = AXES.map(() => new Float32Array(m));
+    let i = (this.head - m + this.n) % this.n;
+    for (let j = 0; j < m; j++) {
+      out[0][j] = this.d[0][i]; out[1][j] = this.d[1][i]; out[2][j] = this.d[2][i];
+      i = (i + 1) % this.n;
+    }
+    return out;
+  }
+}
+const rings = [new Ring(CAP), new Ring(CAP)];
+const lastRx = [0, 0];
+let odr = 400, paused = false, blockTimes = [];
+
+function onBlock(m) {
+  odr = m.odr;
+  const bin = atob(m.b64), buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  const dv = new DataView(buf.buffer), k = m.k, n = Math.floor(buf.length / 6);
+  for (let i = 0, off = 0; i < n; i++, off += 6) {
+    rings[k].push(dv.getInt16(off, true) * G_PER_LSB,
+                  dv.getInt16(off + 2, true) * G_PER_LSB,
+                  dv.getInt16(off + 4, true) * G_PER_LSB);
+  }
+  lastRx[k] = performance.now();
+  const now = performance.now();
+  blockTimes.push(now);
+  while (blockTimes.length && now - blockTimes[0] > 2000) blockTimes.shift();
+}
+
+function onStatus(s) {
+  document.getElementById("linkDot").classList.toggle("ok", !!s.link);
+  document.getElementById("linkTxt").textContent = s.link ? "streaming" : "no data from MCU";
+  document.getElementById("odr").textContent = s.odr || "-";
+  document.getElementById("lost").textContent = s.lost;
+  document.getElementById("viewers").textContent = s.viewers;
+  document.getElementById("bps").textContent = (blockTimes.length / 2).toFixed(1);
+  if (s.cam) {
+    const c = s.cam;
+    document.getElementById("camWhy").textContent = "App camera: " + c.state;
+    if (camMode === "app" && c.state === "ok") {
+      const want = c.req ? { "480": 480, "720": 720, "1080": 1080 }[c.req] : null;
+      const short = want && c.height && c.height < want ? ` (camera max ${c.width}\u00d7${c.height})` : "";
+      document.getElementById("camInfo").textContent =
+        `${c.width}\u00d7${c.height} \u00b7 ${c.mode || ""} \u00b7 ${c.fps} fps \u00b7 ${c.mbps} MB/s${short}`;
+    }
+    document.getElementById("camClock").style.display = c.mode === "passthrough" && camMode === "app" ? "block" : "none";
+    if (c.width && c.height && camMode === "app") document.getElementById("cam").style.aspectRatio = `${c.width} / ${c.height}`;
+  }
+  if (s.settings) {
+    setSeg("camRes", String(s.settings.cam));
+    setSeg("posHz", String(s.settings.pos_hz));
+  }
+  if (s.pos_stats) {
+    const ps = s.pos_stats, slow = ps.hz < 0.8 * ps.set_hz || (ps.lat_max_ms || 0) > 250;
+    const el = document.getElementById("posStat");
+    el.className = slow ? "warn" : "muted";
+    el.textContent = `achieved ${ps.hz} Hz \u00b7 reply ${ps.lat_avg_ms ?? "\u2014"} ms avg, ${ps.lat_max_ms ?? "\u2014"} max` +
+      (slow ? " \u2014 printer busy; lower the rate if prints show pauses" : "");
+  }
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.t === "a") onBlock(m);
+    else if (m.t === "s") onStatus(m);
+    else if (m.t === "pos") onPos(m);
+    else if (m.t === "p") onPrinter(m);
+    else if (m.t === "ps") { P.status = m.status; renderPrinterCard(); }
+    else if (m.t === "alert") addAlert(m.at, m.line);
+    else if (m.t === "setup") loadPrinter();
+  };
+  es.onerror = () => {
+    document.getElementById("linkDot").classList.remove("ok");
+    document.getElementById("linkTxt").textContent = "board not reachable - retrying";
+  };
+}
+
+// ------------------------------------------------------------ maths
+function meanOf(a) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return a.length ? s / a.length : 0; }
+
+function stats(a) {
+  const mu = meanOf(a); let ss = 0, pk = 0;
+  for (let i = 0; i < a.length; i++) { const v = a[i] - mu; ss += v * v; if (Math.abs(v) > pk) pk = Math.abs(v); }
+  return { mean: mu, rms: a.length ? Math.sqrt(ss / a.length) : 0, peak: pk };
+}
+
+function fft(re, im) {                    // in-place radix-2
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let j = 0; j < len / 2; j++) {
+        const a = i + j, b = a + len / 2;
+        const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const ncr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = ncr;
+      }
+    }
+  }
+}
+
+function welch(x, fs, nfft) {             // one-sided PSD, g^2/Hz
+  const w = new Float32Array(nfft); let wss = 0;
+  for (let i = 0; i < nfft; i++) { w[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (nfft - 1)); wss += w[i] * w[i]; }
+  const half = nfft / 2, psd = new Float64Array(half + 1);
+  const step = nfft / 2; let segs = 0;
+  for (let s = 0; s + nfft <= x.length; s += step) {
+    let mu = 0; for (let i = 0; i < nfft; i++) mu += x[s + i]; mu /= nfft;
+    const re = new Float64Array(nfft), im = new Float64Array(nfft);
+    for (let i = 0; i < nfft; i++) re[i] = (x[s + i] - mu) * w[i];
+    fft(re, im);
+    for (let k = 0; k <= half; k++) psd[k] += re[k] * re[k] + im[k] * im[k];
+    segs++;
+  }
+  if (!segs) return null;
+  const scale = 1 / (fs * wss * segs);
+  for (let k = 0; k <= half; k++) psd[k] *= (k === 0 || k === half) ? scale : 2 * scale;
+  return psd;
+}
+
+// ------------------------------------------------------------ drawing
+function fitCanvas(c) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: c.clientWidth, h: c.clientHeight };
+}
+
+function niceStep(range, target) {
+  const raw = range / target, p = Math.pow(10, Math.floor(Math.log10(raw))), r = raw / p;
+  return (r < 1.5 ? 1 : r < 3.5 ? 2 : r < 7.5 ? 5 : 10) * p;
+}
+
+function frame(ctx, w, h, pad) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#12151b"; ctx.fillRect(pad.l, pad.t, w - pad.l - pad.r, h - pad.t - pad.b);
+  ctx.font = "11px system-ui, sans-serif"; ctx.lineWidth = 1;
+}
+
+function unitLabel(ctx, pad, txt) {
+  ctx.save(); ctx.font = "11px system-ui, sans-serif";
+  const w = ctx.measureText(txt).width;
+  ctx.fillStyle = "rgba(18,21,27,0.85)"; ctx.fillRect(pad.l + 4, pad.t + 3, w + 8, 15);
+  ctx.fillStyle = "#8a93a3"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillText(txt, pad.l + 8, pad.t + 5); ctx.restore();
+}
+
+const yScale = [0.05, 0.05];
+function drawTrace(k, data, demean) {
+  const c = document.getElementById("trace" + k), { ctx, w, h } = fitCanvas(c);
+  const pad = { l: 46, r: 8, t: 8, b: 20 }, pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  frame(ctx, w, h, pad);
+  const n = data[0].length; if (n < 2) return;
+  const series = data.map(a => { if (!demean) return a; const mu = meanOf(a); return a.map(v => v - mu); });
+  let lo = Infinity, hi = -Infinity;
+  for (const a of series) for (let i = 0; i < n; i++) { if (a[i] < lo) lo = a[i]; if (a[i] > hi) hi = a[i]; }
+  let y0, y1;
+  if (demean) {
+    const target = Math.max(0.02, Math.max(-lo, hi) * 1.15);
+    yScale[k] = Math.max(target, yScale[k] * 0.97);
+    y0 = -yScale[k]; y1 = yScale[k];
+  } else {
+    const m = Math.max(0.02, (hi - lo) * 0.1); y0 = lo - m; y1 = hi + m;
+  }
+  const X = i => pad.l + (i / (n - 1)) * pw, Y = v => pad.t + (1 - (v - y0) / (y1 - y0)) * ph;
+  // grid
+  const st = niceStep(y1 - y0, 4);
+  ctx.strokeStyle = "#262b36"; ctx.fillStyle = "#8a93a3"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let v = Math.ceil(y0 / st) * st; v <= y1 + 1e-9; v += st) {
+    const y = Y(v); ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+    ctx.fillText((Math.abs(v) < 1e-9 ? 0 : v).toFixed(st < 0.01 ? 3 : st < 0.1 ? 2 : 1), pad.l - 5, y);
+  }
+  const secs = n / odr; ctx.textBaseline = "top";
+  for (let s = 0; s <= secs + 1e-9; s += 0.5) {
+    const x = pad.l + (1 - s / secs) * pw;
+    ctx.textAlign = s < 1e-9 ? "right" : (s > secs - 0.25 ? "left" : "center");
+    ctx.fillText(s < 1e-9 ? "now" : "-" + s.toFixed(1) + " s", x, h - pad.b + 4);
+  }
+
+  // lines
+  ctx.save(); ctx.beginPath(); ctx.rect(pad.l, pad.t, pw, ph); ctx.clip(); ctx.lineWidth = 1.2;
+  series.forEach((a, ai) => {
+    ctx.strokeStyle = COLORS[AXES[ai]]; ctx.beginPath();
+    for (let i = 0; i < n; i++) { const x = X(i), y = Y(a[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+  });
+  ctx.restore();
+  unitLabel(ctx, pad, "g");
+}
+
+const psdTop = [-2, -2];
+function drawPsd(k, psds, fs, nfft) {
+  const c = document.getElementById("psd" + k), { ctx, w, h } = fitCanvas(c);
+  const pad = { l: 46, r: 8, t: 8, b: 30 }, pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  frame(ctx, w, h, pad);
+  if (!psds) return;
+  const df = fs / nfft, fmax = fs / 2;
+  let mx = 1e-12;
+  for (const p of psds) for (let i = 1; i < p.length; i++) if (p[i] > mx) mx = p[i];
+  const top = Math.ceil(Math.log10(mx));
+  psdTop[k] = top >= psdTop[k] ? top : (Math.log10(mx) < psdTop[k] - 1.5 ? psdTop[k] - 1 : psdTop[k]);
+  const yTop = psdTop[k], yBot = yTop - 6;
+  const X = f => pad.l + (f / fmax) * pw;
+  const Y = v => pad.t + (1 - (Math.log10(Math.max(v, 1e-30)) - yBot) / (yTop - yBot)) * ph;
+  ctx.strokeStyle = "#262b36"; ctx.fillStyle = "#8a93a3";
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let e = yBot; e <= yTop; e++) {
+    const y = Y(Math.pow(10, e)); ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+    ctx.fillText("1e" + e, pad.l - 5, y);
+  }
+  const fst = niceStep(fmax, Math.max(4, Math.min(10, pw / 55))); ctx.textAlign = "center"; ctx.textBaseline = "top";
+  for (let f = 0; f <= fmax + 1e-9; f += fst) {
+    const x = X(f); ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, h - pad.b); ctx.stroke();
+    ctx.textAlign = f + fst > fmax + 1e-9 ? "right" : "center";
+    ctx.fillText(f.toFixed(0), x, h - pad.b + 3);
+  }
+  ctx.textAlign = "center"; ctx.fillText("Hz", pad.l + pw / 2, h - pad.b + 15);
+
+  ctx.save(); ctx.beginPath(); ctx.rect(pad.l, pad.t, pw, ph); ctx.clip(); ctx.lineWidth = 1.2;
+  psds.forEach((p, ai) => {
+    ctx.strokeStyle = COLORS[AXES[ai]]; ctx.beginPath();
+    for (let i = 1; i < p.length; i++) { const x = X(i * df), y = Y(p[i]); i > 1 ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+  });
+  const sh = (P.setup || {}).input_shaping;
+  if (sh) {
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(230,190,80,0.8)"; ctx.fillStyle = "#e6be50";
+    ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "top";
+    let row = 0;
+    for (const ax of ["x", "y"]) {
+      const f = sh[ax] && sh[ax].f; if (!f || f >= fmax) continue;
+      const x = X(f); ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + ph); ctx.stroke();
+      const lbl = `shaper ${ax.toUpperCase()} ${f.toFixed(1)}`;
+      ctx.textAlign = x > pad.l + pw - 90 ? "right" : "left";
+      ctx.fillText(lbl, x + (ctx.textAlign === "left" ? 4 : -4), pad.t + 22 + 13 * row++);
+    }
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+  unitLabel(ctx, pad, "PSD g²/Hz");
+}
+
+function statBox(cls, label, val, foot, small) {
+  return `<div class="stat${small ? " wide" : ""}"><div class="k ${cls}">${label}</div><div class="v${small ? " small" : ""}">${val}</div><div class="f">${foot}</div></div>`;
+}
+
+// ------------------------------------------------------------ main loop
+let lastPsd = 0, psdCache = [null, null], psdInfo = [null, null];
+let lastPrDraw = 0;
+function render() {
+  requestAnimationFrame(render);
+  if (paused) return;
+  const now = performance.now(), demean = document.getElementById("demean").checked;
+  const doPsd = now - lastPsd > 1000; if (doPsd) lastPsd = now;
+  const nfft = odr >= 256 ? 256 : 128;
+  for (let k = 0; k < 2; k++) {
+    const card = document.getElementById("card" + k);
+    const live = now - lastRx[k] < 2000 && rings[k].len > 10;
+    card.classList.toggle("absent", !live);
+    if (!live) continue;
+    const tr = rings[k].last(Math.round(2 * odr));
+    drawTrace(k, tr, demean);
+    if (doPsd) {
+      const seg = rings[k].last(Math.round(4 * odr));
+      const psds = seg.map(a => welch(a, odr, nfft));
+      psdCache[k] = psds[0] ? psds : null;
+      if (psdCache[k]) {
+        const df = odr / nfft;
+        psdInfo[k] = psds.map(p => {
+          let area = 0, pk = 1; for (let i = 1; i < p.length; i++) { area += p[i] * df; if (p[i] > p[pk]) pk = i; }
+          return { grms: Math.sqrt(area), fpk: pk * df };
+        });
+      }
+    }
+    drawPsd(k, psdCache[k], odr, nfft);
+    const st = tr.map(stats), tot = Math.sqrt(st.reduce((s, a) => s + a.rms * a.rms, 0));
+    const info = psdInfo[k];
+    let html = "";
+    st.forEach((a, ai) => {
+      const foot = info ? `pk ${a.peak.toFixed(3)} g &middot; ${info[ai].fpk.toFixed(1)} Hz` : `pk ${a.peak.toFixed(3)} g`;
+      html += statBox(AXES[ai], AXES[ai].toUpperCase() + " Grms", a.rms.toFixed(4), foot);
+    });
+    const psdTot = info ? Math.sqrt(info.reduce((s, a) => s + a.grms * a.grms, 0)) : null;
+    html += statBox("", "Total Grms", tot.toFixed(4), psdTot !== null ? `PSD Grms ${psdTot.toFixed(4)}` : "");
+    const mfmt = v => { const s = v.toFixed(2); return s === "-0.00" ? "0.00" : s; };
+    html += statBox("", "Mean x / y / z", st.map(a => mfmt(a.mean)).join(" / "), "g (gravity + offset)", true);
+    document.getElementById("stats" + k).innerHTML = html;
+  }
+  if (prDirty && now - lastPrDraw > 500) { lastPrDraw = now; prDirty = false; drawTemps(); drawPwm(); drawPath(); }
+}
+
+// ------------------------------------------------------------ printer (read-only)
+const P = { live: {}, status: {}, setup: {}, mesh: null, files: null, hist: [], path: [],
+            printId: null, setupSeq: null };
+let prDirty = true, tWinMin = 15, pathWinMin = 5, logLines = [], loadingPr = false;
+// Windows use the BOARD's clock (timestamps in the data), not this device's.
+let boardOffset = null;                         // board_time - local_time, seconds
+function noteBoardTime(t) { if (isNum(t)) boardOffset = t - Date.now() / 1000; }
+const boardNow = () => Date.now() / 1000 + (boardOffset ?? 0);
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const isNum = v => typeof v === "number" && isFinite(v);
+const num = (v, d = 1) => isNum(v) ? v.toFixed(d) : "—";
+function fmtDur(s) {
+  if (!isNum(s)) return "—";
+  s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${String(x).padStart(2, "0")}s`;
+}
+const fmtClock = t => isNum(t) ? new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+const pwm = v => isNum(v) ? `${Math.round(v)}/127 (${Math.round(v / 127 * 100)} %)` : "—";
+
+async function loadPrinter() {
+  if (loadingPr) return; loadingPr = true;
+  try {
+    const j = await (await fetch("/printer.json")).json();
+    P.setup = j.setup || {}; P.mesh = j.mesh; P.meshInfo = j.mesh_info || {}; P.files = j.files; P.setupSeq = j.setup_seq;
+    P.hist = j.history || []; P.path = j.path || []; P.printId = j.print_id;
+    if (P.path.length) noteBoardTime(P.path[P.path.length - 1].t);
+    else if (P.hist.length) noteBoardTime(P.hist[P.hist.length - 1].t);
+    P.live = j.live || {}; P.status = j.status || {};
+    logLines = (j.log || []).slice(); renderLog();
+    (j.alerts || []).forEach(a => addAlert(a.t, a.line));
+    renderPrinterCard(); renderSetup(); renderMesh(); prDirty = true;
+  } catch (e) { setTimeout(loadPrinter, 5000); }
+  loadingPr = false;
+}
+
+function onPrinter(m) {                       // ~1 Hz
+  P.status = m.status || P.status; P.live = m.live || {};
+  if (P.printId !== null && m.print_id !== P.printId) P.path = [];
+  P.printId = m.print_id;
+  if (m.live && isNum(m.live.t)) noteBoardTime(m.live.t);
+  if (P.setupSeq !== null && m.setup_seq !== P.setupSeq) loadPrinter();
+  const L = P.live;
+  if (isNum(L.t)) {
+    P.hist.push({ t: L.t, hotend: L.hotend, hotend_target: L.hotend_target, bed: L.bed, bed_target: L.bed_target,
+                  hotend_pwm: L.hotend_pwm, bed_pwm: L.bed_pwm });
+    if (P.hist.length > 4 * 3600) P.hist.splice(0, P.hist.length - 4 * 3600);
+  }
+  if (m.log_new && m.log_new.length) { logLines.push(...m.log_new); if (logLines.length > 300) logLines.splice(0, logLines.length - 300); renderLog(); }
+  renderPrinterCard(); prDirty = true;
+}
+
+function onPos(m) {
+  P.path.push(m); noteBoardTime(m.t);
+  if (P.path.length > 24000) P.path.splice(0, P.path.length - 24000);
+  prDirty = true;
+}
+
+function tile(label, val, foot) {
+  return `<div class="stat"><div class="k">${label}</div><div class="v">${val}</div><div class="f">${foot || "&nbsp;"}</div></div>`;
+}
+function lamp(cls, text) { return `<span class="lamp ${cls}"><i></i>${esc(text)}</span>`; }
+
+function renderPrinterCard() {
+  const st = P.status || {}, L = P.live || {}, S = P.setup || {};
+  const conn = st.state === "connected";
+  $("prDot").classList.toggle("ok", conn);
+  $("prTxt").textContent = "printer: " + (conn ? (L.printing ? "printing" : "idle") : "offline");
+  $("prPort").textContent = st.port ? `${st.port}${st.baud ? " @ " + st.baud : ""}${st.usb ? " · " + st.usb : ""}` : "";
+  $("pState").textContent = conn ? (L.state || "—") : "Not connected";
+  $("pConn").textContent = conn ? (st.reset_seen ? "⚠ board reset seen when the port opened" : "")
+                                : (st.state || "");
+  $("pFile").textContent = L.printing && L.file_long ? L.file_long : "";
+  $("pBar").style.width = (L.printing && isNum(L.progress) ? L.progress : 0) + "%";
+  const sd = L.sd_total ? `${(L.sd_done || 0).toLocaleString()} / ${L.sd_total.toLocaleString()} B` : "";
+  $("pTiles").innerHTML =
+    tile("Hotend °C", `${num(L.hotend)} / ${num(L.hotend_target, 0)}`, "heater " + pwm(L.hotend_pwm)) +
+    tile("Bed °C", `${num(L.bed)} / ${num(L.bed_target, 0)}`, "heater " + pwm(L.bed_pwm)) +
+    tile("Progress", L.printing ? `${num(L.progress, 1)} %` : "—", sd) +
+    tile("Print time", L.printing ? esc(L.print_time_str || "—") : "—", "slicer " + fmtDur(L.slicer_est_s)) +
+    tile("ETA", fmtDur(L.eta_slicer_s), "by progress " + fmtDur(L.eta_progress_s)) +
+    tile("Finish", fmtClock(L.finish_slicer), "by progress " + fmtClock(L.finish_progress)) +
+    tile("Speed / flow", `${num(L.speed, 0)} / ${num(L.flow, 0)} %`, "M220 / M221") +
+    tile("Filament", isNum(L.filament_mm) ? `${(L.filament_mm / 1000).toFixed(2)} m` : "—",
+         isNum(L.filament_g) ? `≈ ${L.filament_g.toFixed(1)} g · ${esc(L.filament_scope)}` : "");
+  $("pPos").innerHTML =
+    `<tr><th></th><th>X</th><th>Y</th><th>Z</th><th>E</th></tr>` +
+    `<tr><td>planned</td><td>${num(L.x, 2)}</td><td>${num(L.y, 2)}</td><td>${num(L.z, 2)}</td><td>${num(L.e, 2)}</td></tr>` +
+    `<tr><td>motor</td><td>${num(L.x_act, 2)}</td><td>${num(L.y_act, 2)}</td><td>${num(L.z_act, 3)}</td><td></td></tr>` +
+    `<tr><td>mesh Z corr</td><td colspan="4">${isNum(L.z_corr) ? (L.z_corr >= 0 ? "+" : "") + L.z_corr.toFixed(3) + " mm" : "—"}` +
+    ` &nbsp;·&nbsp; lead ${isNum(L.lead) ? L.lead.toFixed(2) + " mm ahead of motors" : "—"}` +
+    ` &nbsp;·&nbsp; M114 reply ${isNum(L.lat_ms) ? L.lat_ms.toFixed(0) + " ms" : "—"}</td></tr>`;
+  let lamps = "";
+  const es = L.endstops || {};
+  for (const k of ["x_min", "y_min", "z_min", "z_max"]) {
+    if (es[k] === undefined) continue;
+    const trig = String(es[k]).toUpperCase().startsWith("TRIG");
+    lamps += lamp(trig ? "warn" : "", `${k.replace("_", " ")}: ${trig ? "triggered" : "open"}`);
+  }
+  if (es.filament !== undefined) {
+    const present = String(es.filament).toUpperCase().startsWith("TRIG");   // as phase 1
+    lamps += lamp(present ? "ok" : "bad", `filament: ${present ? "present" : "NOT detected"}`);
+  }
+  const onoff = (v, name) => v === undefined ? "" : lamp(v ? "ok" : "", `${name}: ${v ? "ON" : "OFF"}`);
+  lamps += onoff(S.runout, "runout sensor") + onoff(S.soft_endstops, "soft endstops") +
+           onoff(S.power_loss, "power-loss recovery") + onoff(S.leveling, "bed levelling");
+  if (isNum(S.z_offset)) lamps += lamp("info", `Z offset ${S.z_offset >= 0 ? "+" : ""}${S.z_offset.toFixed(2)} mm`);
+  $("pLamps").innerHTML = lamps;
+}
+
+function renderSetup() {
+  const S = P.setup || {};
+  const rows = [
+    ["Firmware", S.firmware], ["Machine", S.machine], ["Steps/mm", S.steps],
+    ["Max feedrate", S.max_feed], ["Max accel", S.max_accel], ["Accel P/R/T", S.accel],
+    ["Jerk / segment", S.jerk], ["Hotend PID", S.hotend_pid], ["Bed PID", S.bed_pid],
+    ["Probe offset", S.probe_offset], ["Linear advance", S.linear_advance],
+    ["Input shaping", S.input_shaping ? Object.entries(S.input_shaping)
+        .map(([a, v]) => `${a.toUpperCase()} ${v.f} Hz (D ${v.d})`).join(" · ") : undefined],
+    ["Material presets", S.presets], ["Filament load/unload", S.filament_unload],
+    ["Capabilities", S.caps_on ? S.caps_on.join(", ") : undefined],
+  ];
+  $("setTbl").innerHTML = rows.filter(r => r[1] !== undefined && r[1] !== null && r[1] !== "")
+    .map(r => `<tr><td>${r[0]}</td><td>${esc(r[1])}</td></tr>`).join("") ||
+    `<tr><td>&mdash;</td><td class="muted">read when the printer connects</td></tr>`;
+  const f = P.files;
+  $("sdFiles").innerHTML = Array.isArray(f) ? `<details style="margin-top:8px"><summary>SD card (${f.length} files, read while idle)</summary>
+    <table class="kv">${f.map(x => `<tr><td>${esc(x.size)}</td><td>${esc(x.name)}</td></tr>`).join("")}</table></details>` : "";
+}
+
+function renderLog() {
+  const pre = $("logPre"), atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+  pre.textContent = logLines.join("\n");
+  if (atEnd) pre.scrollTop = pre.scrollHeight;
+  $("logInfo").textContent = `(${logLines.length} lines)`;
+}
+
+const alertList = [];
+function addAlert(t, line) {
+  if (alertList.some(a => a.t === t && a.line === line)) return;
+  alertList.push({ t, line }); if (alertList.length > 5) alertList.shift();
+  const box = $("alerts");
+  box.innerHTML = "⚠ Printer: " + alertList.slice(-3).reverse()
+    .map(a => `<b>${fmtClock(a.t)}</b> ${esc(a.line)}`).join(" &nbsp;|&nbsp; ") + " &nbsp;<span class='muted'>(click to hide)</span>";
+  box.classList.add("on");
+}
+$("alerts").onclick = () => $("alerts").classList.remove("on");
+
+// Heater power: Marlin @: / B@: are 0..127 (as phase 1 "of 127"), shown in %.
+function drawPwm() {
+  const c = $("pwmC"), { ctx, w, h } = fitCanvas(c);
+  const pad = { l: 40, r: 10, t: 8, b: 22 }, pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  frame(ctx, w, h, pad);
+  const now = boardNow(), t0 = now - tWinMin * 60;
+  const d = P.hist.filter(r => r.t >= t0);
+  const X = t => pad.l + (t - t0) / (now - t0) * pw, Y = v => pad.t + (1 - v / 100) * ph;
+  ctx.strokeStyle = "#262b36"; ctx.fillStyle = "#8a93a3"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let v = 0; v <= 100; v += 25) {
+    const y = Y(v); ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke(); ctx.fillText(v, pad.l - 5, y);
+  }
+  const nt = pw < 420 ? 2 : 5, tst = tWinMin * 60 / nt;
+  ctx.textBaseline = "top";
+  for (let i = 0; i <= nt; i++) {
+    const t = t0 + i * tst;
+    ctx.textAlign = i === 0 ? "left" : i === nt ? "right" : "center";
+    ctx.fillText(new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), X(t), h - pad.b + 4);
+  }
+  if (d.length < 2) {
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("waiting for printer data", pad.l + pw / 2, pad.t + ph / 2);
+  } else {
+    const line = (k, col) => {
+      ctx.strokeStyle = col; ctx.lineWidth = 1.3; ctx.beginPath(); let on = false;
+      for (const r of d) { const v = r[k]; if (!isNum(v)) { on = false; continue; }
+        const x = X(r.t), y = Y(Math.max(0, Math.min(100, v / 127 * 100))); on ? ctx.lineTo(x, y) : ctx.moveTo(x, y); on = true; }
+      ctx.stroke();
+    };
+    ctx.save(); ctx.beginPath(); ctx.rect(pad.l, pad.t, pw, ph); ctx.clip();
+    line("bed_pwm", "#5aa2f0"); line("hotend_pwm", "#f0a35a");
+    ctx.restore();
+  }
+  unitLabel(ctx, pad, "heater %");
+  // average over the window: how hard each heater works to hold its target
+  const avg = k => { const v = d.map(r => r[k]).filter(isNum); return v.length ? v.reduce((a, b) => a + b, 0) / v.length / 127 * 100 : null; };
+  const ah = avg("hotend_pwm"), ab = avg("bed_pwm");
+  $("pwmNow").textContent = ah === null ? "" :
+    `\u00b7 average over window: hotend ${ah.toFixed(0)} %, bed ${ab === null ? "\u2014" : ab.toFixed(0) + " %"}`;
+}
+
+function drawTemps() {
+  const c = $("tempC"), { ctx, w, h } = fitCanvas(c);
+  const pad = { l: 40, r: 10, t: 8, b: 22 }, pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  frame(ctx, w, h, pad);
+  const now = boardNow(), t0 = now - tWinMin * 60;
+  const d = P.hist.filter(r => r.t >= t0);
+  if (d.length < 2) { ctx.fillStyle = "#8a93a3"; ctx.textAlign = "center"; ctx.fillText("waiting for printer data", pad.l + pw / 2, pad.t + ph / 2); return; }
+  let lo = Infinity, hi = -Infinity;
+  for (const r of d) for (const k of ["hotend", "hotend_target", "bed", "bed_target"]) {
+    const v = r[k]; if (!isNum(v) || (k.endsWith("target") && v <= 0)) continue;
+    if (v < lo) lo = v; if (v > hi) hi = v;
+  }
+  if (!isFinite(lo)) return;
+  lo = Math.floor((lo - 5) / 10) * 10; hi = Math.ceil((hi + 5) / 10) * 10;
+  const X = t => pad.l + (t - t0) / (now - t0) * pw, Y = v => pad.t + (1 - (v - lo) / (hi - lo)) * ph;
+  const st = niceStep(hi - lo, 5);
+  ctx.strokeStyle = "#262b36"; ctx.fillStyle = "#8a93a3"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let v = Math.ceil(lo / st) * st; v <= hi; v += st) {
+    const y = Y(v); ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke(); ctx.fillText(v.toFixed(0), pad.l - 5, y);
+  }
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  const nt = pw < 420 ? 2 : 5, tst = tWinMin * 60 / nt;
+  for (let i = 0; i <= nt; i++) {
+    const t = t0 + i * tst, x = X(t);
+    ctx.textAlign = i === 0 ? "left" : i === nt ? "right" : "center";
+    ctx.fillText(new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), x, h - pad.b + 4);
+  }
+  const line = (k, col, dash) => {
+    ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash(dash ? [5, 4] : []); ctx.beginPath();
+    let started = false;
+    for (const r of d) { const v = r[k]; if (!isNum(v)) { started = false; continue; }
+      const x = X(r.t), y = Y(v); started ? ctx.lineTo(x, y) : ctx.moveTo(x, y); started = true; }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  ctx.save(); ctx.beginPath(); ctx.rect(pad.l, pad.t, pw, ph); ctx.clip();
+  line("hotend_target", "#f0a35a", true); line("bed_target", "#5aa2f0", true);
+  line("hotend", "#f0a35a", false); line("bed", "#5aa2f0", false);
+  ctx.restore();
+  unitLabel(ctx, pad, "°C");
+}
+
+function zColor(f) {                            // 0..1 -> blue..yellow
+  const h = 250 - 200 * Math.max(0, Math.min(1, f));
+  return `hsl(${h}, 75%, 58%)`;
+}
+
+function drawPath() {
+  const c = $("pathC"), { ctx, w, h } = fitCanvas(c);
+  ctx.clearRect(0, 0, w, h);
+  const V0 = -8, V1 = 232, size = Math.min(w - 40, h - 30), ox = (w - size) / 2 + 14, oy = 6;
+  const S = v => (v - V0) / (V1 - V0) * size;
+  const X = x => ox + S(x), Y = y => oy + size - S(y);
+  ctx.fillStyle = "#12151b"; ctx.fillRect(ox, oy, size, size);
+  ctx.strokeStyle = "#262b36"; ctx.fillStyle = "#8a93a3"; ctx.font = "11px system-ui, sans-serif"; ctx.lineWidth = 1;
+  for (let v = 0; v <= 220; v += 20) {
+    ctx.beginPath(); ctx.moveTo(X(v), Y(V0)); ctx.lineTo(X(v), Y(V1)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(V0), Y(v)); ctx.lineTo(X(V1), Y(v)); ctx.stroke();
+  }
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  for (let v = 0; v <= 220; v += 40) ctx.fillText(v, X(v), oy + size + 3);
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let v = 0; v <= 220; v += 40) ctx.fillText(v, ox - 4, Y(v));
+  ctx.strokeStyle = "#4a5366"; ctx.strokeRect(X(0), Y(220), S(220) - S(0), S(220) - S(0));
+  const t0 = boardNow() - pathWinMin * 60;
+  const pts = P.path.filter(p => p.t >= t0);
+  if (!pts.length) {
+    ctx.fillStyle = "#8a93a3"; ctx.textAlign = "center"; ctx.fillText("no position data yet", ox + size / 2, oy + size / 2); return;
+  }
+  let zlo = Infinity, zhi = -Infinity;
+  for (const p of pts) { if (p.za < zlo) zlo = p.za; if (p.za > zhi) zhi = p.za; }
+  const zr = Math.max(zhi - zlo, 0.2);
+  ctx.save(); ctx.beginPath(); ctx.rect(ox, oy, size, size); ctx.clip(); ctx.lineWidth = 1.4;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    ctx.strokeStyle = zColor((b.za - zlo) / zr); ctx.globalAlpha = 0.35 + 0.65 * (i / pts.length);
+    ctx.beginPath(); ctx.moveTo(X(a.xa), Y(a.ya)); ctx.lineTo(X(b.xa), Y(b.ya)); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  const last = pts[pts.length - 1];
+  ctx.fillStyle = "#f85149"; ctx.beginPath(); ctx.arc(X(last.xa), Y(last.ya), 4.5, 0, 2 * Math.PI); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = "#d7dce4"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillText(`X ${last.xa.toFixed(1)}  Y ${last.ya.toFixed(1)}  Z ${last.za.toFixed(2)}`, ox + 6, oy + 5);
+  ctx.fillStyle = "#8a93a3";
+  ctx.fillText(`Z ${zlo.toFixed(2)} – ${zhi.toFixed(2)} mm · ${pts.length} pts`, ox + 6, oy + 20);
+}
+
+function renderMesh() {
+  const c = $("meshC"), { ctx, w, h } = fitCanvas(c), Z = P.mesh;
+  ctx.clearRect(0, 0, w, h);
+  if (!Z || !Z.length) {
+    ctx.fillStyle = "#8a93a3"; ctx.font = "12px system-ui"; ctx.textAlign = "center";
+    ctx.fillText("mesh is read when the printer connects", w / 2, h / 2); $("meshStats").innerHTML = ""; return;
+  }
+  const MI = P.meshInfo || {}, rowIdx = MI.row_idx && MI.row_idx.length === Z.length ? MI.row_idx : Z.map((_, j) => j);
+  const ny = Z.length, nx = Z[0].length, vals = Z.flat().filter(isNum);
+  const lo = Math.min(...vals), hi = Math.max(...vals), mid = (lo + hi) / 2, half = Math.max((hi - lo) / 2, 1e-6);
+  const size = Math.min(w - 50, h - 30), cell = size / Math.max(nx, ny), ox = (w - cell * nx) / 2 + 10, oy = 4;
+  ctx.font = "11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const v = Z[j][i], x = ox + i * cell, y = oy + (ny - 1 - j) * cell;     // row 0 = Y min (bottom)
+    if (!isNum(v)) { ctx.fillStyle = "#222"; ctx.fillRect(x, y, cell - 2, cell - 2); continue; }
+    const f = (v - mid) / half;                                             // -1..1
+    const col = f < 0 ? [59 + (42 - 59) * (1 + f), 111 + (47 - 111) * (1 + f), 216 + (58 - 216) * (1 + f)]
+                      : [42 + (216 - 42) * f, 47 + (80 - 47) * f, 58 + (59 - 58) * f];
+    ctx.fillStyle = `rgb(${col.map(Math.round).join(",")})`; ctx.fillRect(x, y, cell - 2, cell - 2);
+    ctx.fillStyle = "#fff"; ctx.fillText((v >= 0 ? "+" : "") + v.toFixed(3), x + cell / 2 - 1, y + cell / 2 - 1);
+  }
+  ctx.fillStyle = "#8a93a3";
+  for (let i = 0; i < nx; i++) ctx.fillText("I" + i, ox + i * cell + cell / 2, oy + ny * cell + 9);
+  ctx.textAlign = "right";
+  for (let j = 0; j < ny; j++) ctx.fillText("J" + rowIdx[j], ox - 6, oy + (ny - 1 - j) * cell + cell / 2);
+  // least-squares plane z = a*i + b*j + c  (tilt, as phase 1 bed tilt analysis)
+  let n = 0, si = 0, sj = 0, sz = 0, sii = 0, sjj = 0, sij = 0, siz = 0, sjz = 0;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const v = Z[j][i]; if (!isNum(v)) continue;
+    n++; si += i; sj += j; sz += v; sii += i * i; sjj += j * j; sij += i * j; siz += i * v; sjz += j * v; }
+  const A = [[sii, sij, si], [sij, sjj, sj], [si, sj, n]], B = [siz, sjz, sz];
+  const det3 = M => M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+  const D = det3(A), solve = col => det3(A.map((r, k) => r.map((v, q) => q === col ? B[k] : v))) / D;
+  const a = solve(0), b = solve(1), c0 = solve(2);
+  let rlo = Infinity, rhi = -Infinity;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const v = Z[j][i]; if (!isNum(v)) continue;
+    const r = v - (a * i + b * j + c0); if (r < rlo) rlo = r; if (r > rhi) rhi = r; }
+  const S = P.setup || {};
+  const incomplete = MI.complete === false;
+  $("meshInfo").textContent = `M420 V · ${nx}×${ny}${S.leveling === undefined ? "" : S.leveling ? " · levelling ON" : " · levelling OFF"}` +
+    (incomplete ? ` · ⚠ incomplete: ${MI.rows} of ${MI.rows_expected || "?"} rows after ${MI.tries} tries` : "");
+  const fitOk = ny >= 2 && nx >= 2 && isFinite(a) && isFinite(b) && isFinite(rlo) && isFinite(rhi);
+  const sgn = v => (v >= 0 ? "+" : "") + v.toFixed(3);
+  $("meshStats").innerHTML = (incomplete || !fitOk) ?
+    `<tr><td>Range</td><td>${(hi - lo).toFixed(3)} mm over the rows received</td></tr>` +
+    `<tr><td>Tilt</td><td class="muted">needs the full grid${incomplete ? " — rows were lost on the serial link; it is re-read on reconnect" : ""}</td></tr>` :
+    `<tr><td>Range</td><td>${(hi - lo).toFixed(3)} mm (min ${lo.toFixed(3)}, max ${hi.toFixed(3)})</td></tr>` +
+    `<tr><td>Tilt (plane fit)</td><td>X ${sgn(a * (nx - 1))} mm, Y ${sgn(b * (ny - 1))} mm across the grid</td></tr>` +
+    `<tr><td>Left after tilt</td><td>${(rhi - rlo).toFixed(3)} mm (bow / twist)</td></tr>`;
+}
+
+// ------------------------------------------------------------ camera
+// The app serves the camera itself on /stream; if it can't, fall back to
+// cam_stream.py on port 8080. Retries alternate between the two.
+const cam = document.getElementById("cam"), camImg = document.getElementById("camImg");
+let camMode = "app";
+function camTry() {
+  const ext = `http://${location.hostname}:8080/stream`;
+  camImg.src = (camMode === "app" ? "/stream" : ext) + "?t=" + Date.now();
+  document.getElementById("camInfo").textContent =
+    camMode === "app" ? "from app" : `from ${location.hostname}:8080`;
+}
+camImg.onerror = () => {
+  cam.classList.add("off");
+  camMode = camMode === "app" ? "ext" : "app";
+  setTimeout(camTry, 3000);
+};
+camImg.onload = () => cam.classList.remove("off");
+camTry();
+
+// ------------------------------------------------------------ controls
+document.getElementById("pause").onclick = (e) => {
+  paused = !paused; e.target.textContent = paused ? "Resume" : "Pause";
+};
+document.getElementById("csv").onclick = () => {
+  location.href = "/capture.csv?s=" + document.getElementById("capLen").value;
+};
+document.getElementById("prCsv").onclick = () => {
+  location.href = "/printer.csv?min=" + document.getElementById("prLen").value;
+};
+function seg(id, cb) {
+  const box = document.getElementById(id);
+  box.querySelectorAll("button").forEach(b => b.onclick = () => {
+    box.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    cb(Number(b.dataset.m)); prDirty = true;
+  });
+}
+seg("tWin", m => tWinMin = m);
+seg("pathWin", m => pathWinMin = m);
+function setSeg(id, val) {
+  document.getElementById(id).querySelectorAll("button").forEach(x => x.classList.toggle("on", x.dataset.m === val));
+}
+seg("camRes", m => { fetch("/settings?cam=" + m).catch(() => {}); document.getElementById("camInfo").textContent = "switching\u2026"; });
+seg("posHz", m => fetch("/settings?pos_hz=" + m).catch(() => {}));
+setInterval(() => {                             // board-time clock on the video
+  const el = document.getElementById("camClock");
+  if (el.style.display !== "none" && boardOffset !== null)
+    el.textContent = new Date(boardNow() * 1000).toLocaleString([], { hour12: false });
+}, 1000);
+window.addEventListener("resize", () => { prDirty = true; renderMesh(); });
+loadPrinter();
+
+connect();
+render();
+</script>
+</body>
+</html>
