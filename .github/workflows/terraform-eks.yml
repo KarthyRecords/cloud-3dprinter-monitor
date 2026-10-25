@@ -82,5 +82,6 @@ jobs:
           fi
 
       - run: terraform init
-      # re-plans and applies in one step, so the apply matches the current state
-      - run: terraform apply -auto-approve -lock-timeout=5m
+      # applying a saved plan file needs no -auto-approve and cannot drift from what was planned
+      - run: terraform plan -out=tfplan -lock-timeout=5m
+      - run: terraform apply -lock-timeout=5m tfplan
