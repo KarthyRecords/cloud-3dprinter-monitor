@@ -18,7 +18,6 @@ AWS EKS cluster built with Terraform, with GitHub Actions self-hosted runners on
 - Applying fixes to the repo‑agent implementation.  
 
 **Up next**
-- Bootstrap remote state storage in S3.  
 - Apply network configuration and provision the EKS cluster via the pipeline.  
 - Deploy runners (infra‑runner, app‑runner) with separate IAM roles.  
 - Build the application image and push it to ECR.  
