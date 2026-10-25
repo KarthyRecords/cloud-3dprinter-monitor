@@ -45,23 +45,13 @@ module "eks" {
         }
       }
     }
-
-    # the ARN is built by hand because irsa_role depends on this module (it would be a cycle)
-    infra_runner = {
-      principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/teracotta-infra-runner"
-      policy_associations = {
-        admin = {
-          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-          access_scope = { type = "cluster" }
-        }
-      }
-    }
   }
 
-  # fixed list, otherwise the KMS key policy names whoever is running terraform
+  # fixed list, otherwise the KMS key policy names whoever is running terraform.
+  # The runner role is not listed: it does not exist yet when the key is created, and the
+  # key's default root statement already lets its IAM policy (kms:*) manage the key.
   kms_key_administrators = [
     "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/terraform-user",
-    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/teracotta-infra-runner",
   ]
 
   node_security_group_tags = {
@@ -138,11 +128,18 @@ resource "helm_release" "cert_manager" {
   version          = "v1.13.0"
   namespace        = "cert-manager"
   create_namespace = true
+  timeout          = 900 # Fargate starts one node per pod, so the install and its hook job are slow
+  atomic           = true
 
   set = [
     {
       name  = "installCRDs"
       value = "true"
+    },
+    # Fargate's own agent listens on 10250, which is the webhook's default port
+    {
+      name  = "webhook.securePort"
+      value = "10260"
     }
   ]
 
@@ -155,6 +152,8 @@ resource "helm_release" "arc" {
   chart            = "actions-runner-controller"
   namespace        = "actions-runner-system"
   create_namespace = true
+  timeout          = 900
+  atomic           = true
 
   set = [
     {
@@ -219,4 +218,23 @@ resource "helm_release" "karpenter" {
 
 output "karpenter_node_role" {
   value = module.karpenter.node_iam_role_name
+}
+
+# The runner's cluster access lives outside module.eks: the role is created after the
+# cluster (it needs the OIDC provider), and EKS rejects an entry for a role that does not exist.
+resource "aws_eks_access_entry" "infra_runner" {
+  cluster_name  = module.eks.cluster_name
+  principal_arn = module.irsa_role.iam_role_arn
+}
+
+resource "aws_eks_access_policy_association" "infra_runner" {
+  cluster_name  = module.eks.cluster_name
+  principal_arn = module.irsa_role.iam_role_arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.infra_runner]
 }
