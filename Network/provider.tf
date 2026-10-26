@@ -4,9 +4,9 @@ provider "aws" {
 
 terraform {
   backend "s3" {
-    bucket = "terracotta-terraform-state"
-    key    = "terraform.tfstate"
-    region = "eu-west-1"
+    bucket       = "terracotta-terraform-state"
+    key          = "terraform.tfstate"
+    region       = "eu-west-1"
     use_lockfile = true
   }
 }
