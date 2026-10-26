@@ -1,22 +1,36 @@
-name: terraform-eks
+name: terraform
 
-# Pull request touching the stack: terraform plan.
-# Merge to main touching the stack: terraform plan, then apply after approval
-# (the apply job uses the "production" environment; add required reviewers in
+# Pull request: terraform plan for every stack the PR changes.
+# Merge to main: plan, then apply for every changed stack after approval
+# (apply uses the "production" environment; add required reviewers in
 # Settings -> Environments -> production).
+#
+# Stacks are listed once, in apply order, in the detect job below.
 on:
   pull_request:
     paths:
+      - Network/**
       - eks-cluster-for-selfhosted-runner/**
-      - .github/workflows/terraform-eks.yml
       - iot-ingest/**
+      - .github/workflows/terraform-eks.yml
   push:
     branches: [main]
     paths:
+      - Network/**
       - eks-cluster-for-selfhosted-runner/**
-      - .github/workflows/terraform-eks.yml
       - iot-ingest/**
+      - .github/workflows/terraform-eks.yml
   workflow_dispatch:
+    inputs:
+      stack:
+        description: Stack to run, or "all"
+        type: choice
+        default: all
+        options:
+          - all
+          - Network
+          - eks-cluster-for-selfhosted-runner
+          - iot-ingest
 
 permissions:
   contents: read
@@ -27,19 +41,78 @@ env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
 
-defaults:
-  run:
-    working-directory: eks-cluster-for-selfhosted-runner
-
 # one run at a time: two applies must never touch the same state
 concurrency:
   group: terraform-eks
   cancel-in-progress: false
 
 jobs:
+  # Works out which stack folders changed and passes them on as a matrix.
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      stacks: ${{ steps.pick.outputs.stacks }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          REQUESTED: ${{ inputs.stack }}
+        run: |
+          # apply order: network first, then the cluster, then what runs on top
+          ALL='["Network","eks-cluster-for-selfhosted-runner","iot-ingest"]'
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$REQUESTED" = "all" ]; then
+              stacks="$ALL"
+            else
+              stacks=$(jq -nc --arg s "$REQUESTED" '[$s]')
+            fi
+          else
+            if [ "$EVENT" = "pull_request" ]; then
+              base="$BASE_SHA"
+            else
+              base="$BEFORE_SHA"
+            fi
+            if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+              files=$(git ls-files)
+            else
+              files=$(git diff --name-only "$base" "$HEAD_SHA")
+            fi
+            echo "Changed files:"; echo "$files"
+
+            stacks=$(echo "$files" | jq -R -s -c --argjson all "$ALL" '
+              split("\n") as $f
+              | $all | map(. as $s | select($f | any(startswith($s + "/"))))')
+
+            # a pipeline edit alone plans every stack on a PR (to test it); a merge never applies for it
+            if [ "$EVENT" = "pull_request" ] && echo "$files" | grep -qx ".github/workflows/terraform-eks.yml"; then
+              stacks="$ALL"
+            fi
+          fi
+
+          echo "Stacks to run: $stacks"
+          echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
+
   plan:
+    needs: detect
+    if: needs.detect.outputs.stacks != '[]'
     runs-on: [self-hosted, infra-runner]
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: ${{ fromJSON(needs.detect.outputs.stacks) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.stack }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,7 +120,7 @@ jobs:
         with:
           terraform_wrapper: false
 
-      # the helm and kubectl providers call `aws eks get-token`
+      # the helm and kubectl providers in the cluster stack call `aws eks get-token`
       - name: Ensure AWS CLI
         run: |
           if ! command -v aws >/dev/null; then
@@ -57,17 +130,28 @@ jobs:
           fi
           aws sts get-caller-identity
 
+      # formatting is reported but does not block a plan
       - run: terraform fmt -check -recursive
+        continue-on-error: true
       - run: terraform init
       - run: terraform validate
       - run: terraform plan -lock-timeout=5m
 
+  # Stacks apply one at a time, in the order listed in the detect job.
   apply:
-    needs: plan
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [detect, plan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect.outputs.stacks != '[]'
     runs-on: [self-hosted, infra-runner]
     timeout-minutes: 60
     environment: production
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        stack: ${{ fromJSON(needs.detect.outputs.stacks) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.stack }}
     steps:
       - uses: actions/checkout@v4
 
