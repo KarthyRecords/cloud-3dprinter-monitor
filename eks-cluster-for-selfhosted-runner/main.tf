@@ -90,7 +90,7 @@ data "aws_caller_identity" "current" {}
 
 # What `terraform apply` of this stack needs: the EKS cluster, its IAM roles and
 # OIDC provider, Karpenter's queue and rules, the cluster log group, the secrets KMS key,
-# security groups and subnet tags, and the GitHub token parameter.
+# security groups and subnet tags, the GitHub token parameter, and the iot-ingest stack.
 data "aws_iam_policy_document" "infra_runner_stack" {
   statement {
     sid    = "ManageClusterStack"
@@ -103,6 +103,20 @@ data "aws_iam_policy_document" "infra_runner_stack" {
       "events:*",
       "logs:*",
       "kms:*",
+    ]
+    resources = ["*"]
+  }
+
+  # The iot-ingest stack: the IoT thing, policy and topic rules, the SNS alerts topic and the
+  # raw-accelerometer Firehose stream. Its DynamoDB tables and S3 bucket are covered by the
+  # managed policies attached to the role; its IAM roles and log group by iam:* and logs:*.
+  statement {
+    sid    = "ManageIotIngestStack"
+    effect = "Allow"
+    actions = [
+      "iot:*",
+      "sns:*",
+      "firehose:*",
     ]
     resources = ["*"]
   }
