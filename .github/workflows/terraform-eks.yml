@@ -9,11 +9,13 @@ on:
     paths:
       - eks-cluster-for-selfhosted-runner/**
       - .github/workflows/terraform-eks.yml
+      - iot-ingest/**
   push:
     branches: [main]
     paths:
       - eks-cluster-for-selfhosted-runner/**
       - .github/workflows/terraform-eks.yml
+      - iot-ingest/**
   workflow_dispatch:
 
 permissions:
