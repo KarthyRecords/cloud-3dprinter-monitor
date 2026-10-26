@@ -4,6 +4,8 @@ name: terraform
 # Merge to main: plan, then apply for every changed stack after approval
 # (apply uses the "production" environment; add required reviewers in
 # Settings -> Environments -> production).
+# Manual run: plans the chosen stack (or all). It applies only if "apply" is ticked
+# and the run is on main; the apply still waits for the same approval.
 #
 # Stacks are listed once, in apply order, in the detect job below.
 on:
@@ -31,6 +33,10 @@ on:
           - Network
           - eks-cluster-for-selfhosted-runner
           - iot-ingest
+      apply:
+        description: Also apply after planning (waits for approval). Leave off to plan only.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -101,8 +107,40 @@ jobs:
           echo "Stacks to run: $stacks"
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
 
-  plan:
+  # Fast, credential-free checks on a GitHub-hosted runner: formatting and validation.
+  # A failure here fails the PR before anything is planned.
+  validate:
     needs: detect
+    if: needs.detect.outputs.stacks != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: ${{ fromJSON(needs.detect.outputs.stacks) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.stack }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      # shows the exact lines to change; fix them locally with `terraform fmt -recursive`
+      - name: Format check
+        run: terraform fmt -check -recursive -diff
+
+      # no backend and no AWS credentials: only the syntax, types and references are checked
+      - name: Init without backend
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate
+
+  plan:
+    needs: [detect, validate]
     if: needs.detect.outputs.stacks != '[]'
     runs-on: [self-hosted, infra-runner]
     timeout-minutes: 30
@@ -130,17 +168,16 @@ jobs:
           fi
           aws sts get-caller-identity
 
-      # formatting is reported but does not block a plan
-      - run: terraform fmt -check -recursive
-        continue-on-error: true
       - run: terraform init
-      - run: terraform validate
       - run: terraform plan -lock-timeout=5m
 
   # Stacks apply one at a time, in the order listed in the detect job.
   apply:
-    needs: [detect, plan]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect.outputs.stacks != '[]'
+    needs: [detect, validate, plan]
+    if: >-
+      needs.detect.outputs.stacks != '[]' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.apply))
     runs-on: [self-hosted, infra-runner]
     timeout-minutes: 60
     environment: production
