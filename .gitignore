@@ -14,3 +14,10 @@
 ## Python
 *.pyc
 *__pycache__/
+
+## Device certificates and keys (never commit)
+*.pem
+*.crt
+*.key
+**/certs/*
+!**/certs/README.txt
