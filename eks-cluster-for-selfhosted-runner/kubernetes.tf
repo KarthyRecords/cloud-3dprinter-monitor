@@ -106,3 +106,91 @@ resource "kubectl_manifest" "infra_runner" {
 
   depends_on = [kubectl_manifest.infra_runner_sa, kubectl_manifest.runner_node_pool]
 }
+
+# --- GitHub Actions app runner: builds the dashboard image and rolls the ECS service ---
+# Separate from the infra runner on purpose: it has Docker (a privileged sidecar), so it gets its own
+# nodes, its own taint and an IAM role that can only push to ECR and update one ECS service.
+
+resource "kubectl_manifest" "app_runner_node_pool" {
+  yaml_body = yamlencode({
+    apiVersion = "karpenter.sh/v1"
+    kind       = "NodePool"
+    metadata   = { name = "app-runner" }
+    spec = {
+      template = {
+        metadata = { labels = { role = "app-runner" } }
+        spec = {
+          nodeClassRef = {
+            group = "karpenter.k8s.aws"
+            kind  = "EC2NodeClass"
+            name  = "runner" # same subnets, security groups and node role as the infra runner pool
+          }
+          taints = [{ key = "dedicated", value = "app-runner", effect = "NoSchedule" }]
+          requirements = [
+            # t3.medium (4 GiB): an image build plus the Docker daemon does not fit on a t3.small
+            { key = "node.kubernetes.io/instance-type", operator = "In", values = ["t3.medium"] },
+            { key = "karpenter.sh/capacity-type", operator = "In", values = ["on-demand"] },
+          ]
+        }
+      }
+      limits = { cpu = "4" } # max 2 x t3.medium
+      disruption = {
+        consolidationPolicy = "WhenEmpty"
+        consolidateAfter    = "2m"
+      }
+    }
+  })
+
+  depends_on = [kubectl_manifest.runner_node_class]
+}
+
+resource "kubectl_manifest" "app_runner_sa" {
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "ServiceAccount"
+    metadata = {
+      name        = "app-runner"
+      namespace   = "actions-runner-system"
+      annotations = { "eks.amazonaws.com/role-arn" = module.app_runner_irsa.iam_role_arn }
+    }
+  })
+
+  depends_on = [helm_release.arc]
+}
+
+# Use in a workflow with:  runs-on: [self-hosted, app-runner]
+resource "kubectl_manifest" "app_runner" {
+  yaml_body = yamlencode({
+    apiVersion = "actions.summerwind.dev/v1alpha1"
+    kind       = "RunnerDeployment"
+    metadata = {
+      name      = "app-runner"
+      namespace = "actions-runner-system"
+    }
+    spec = {
+      replicas = 1
+      template = {
+        spec = {
+          repository         = "karthyy19/cloud-3dprinter-monitor"
+          labels             = ["app-runner"]
+          ephemeral          = true # fresh pod per job, then deleted
+          dockerEnabled      = true # Docker daemon sidecar so `docker build` works
+          serviceAccountName = "app-runner"
+          nodeSelector       = { role = "app-runner" }
+          tolerations = [{
+            key      = "dedicated"
+            operator = "Equal"
+            value    = "app-runner"
+            effect   = "NoSchedule"
+          }]
+          resources = {
+            requests = { cpu = "500m", memory = "1Gi" }
+            limits   = { memory = "2Gi" }
+          }
+        }
+      }
+    }
+  })
+
+  depends_on = [kubectl_manifest.app_runner_sa, kubectl_manifest.app_runner_node_pool]
+}

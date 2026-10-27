@@ -86,6 +86,60 @@ module "irsa_role" {
   }
 }
 
+# The app runner builds the dashboard image and rolls its ECS service, nothing else.
+# Names are built from strings because the ECR repository and ECS service live in the dashboard-ecs stack.
+data "aws_iam_policy_document" "app_runner" {
+  statement {
+    sid       = "EcrLogin"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "PushDashboardImage"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:BatchGetImage",
+      "ecr:CompleteLayerUpload",
+      "ecr:DescribeImages",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:InitiateLayerUpload",
+      "ecr:PutImage",
+      "ecr:UploadLayerPart",
+    ]
+    resources = ["arn:aws:ecr:eu-west-1:${data.aws_caller_identity.current.account_id}:repository/printer-dashboard"]
+  }
+
+  statement {
+    sid       = "RollDashboardService"
+    actions   = ["ecs:UpdateService", "ecs:DescribeServices"]
+    resources = ["arn:aws:ecs:eu-west-1:${data.aws_caller_identity.current.account_id}:service/printer-dashboard/printer-dashboard"]
+  }
+}
+
+resource "aws_iam_policy" "app_runner" {
+  name   = "teracotta-app-runner"
+  policy = data.aws_iam_policy_document.app_runner.json
+}
+
+module "app_runner_irsa" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.0"
+
+  role_name = "teracotta-app-runner"
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["actions-runner-system:app-runner"]
+    }
+  }
+
+  role_policy_arns = {
+    push = aws_iam_policy.app_runner.arn
+  }
+}
+
 data "aws_caller_identity" "current" {}
 
 # What `terraform apply` of this stack needs: the EKS cluster, its IAM roles and
@@ -117,6 +171,19 @@ data "aws_iam_policy_document" "infra_runner_stack" {
       "iot:*",
       "sns:*",
       "firehose:*",
+    ]
+    resources = ["*"]
+  }
+
+  # The dashboard-ecs stack: ECR repository, ECS cluster and service, and the ALB. Its security
+  # groups come from ec2:*, its roles and the GitHub OIDC provider from iam:*, its logs from logs:*.
+  statement {
+    sid    = "ManageDashboardStack"
+    effect = "Allow"
+    actions = [
+      "ecs:*",
+      "ecr:*",
+      "elasticloadbalancing:*",
     ]
     resources = ["*"]
   }

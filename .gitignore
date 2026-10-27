@@ -21,3 +21,7 @@
 *.key
 **/certs/*
 !**/certs/README.txt
+
+# local python envs
+.venv/
+__pycache__/

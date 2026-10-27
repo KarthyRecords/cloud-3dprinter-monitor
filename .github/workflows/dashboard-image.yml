@@ -1,0 +1,78 @@
+name: dashboard-image
+
+# Builds the dashboard container image, pushes it to ECR and rolls the ECS service.
+#
+# A pull request only proves the image builds, on a GitHub-hosted runner (a fork's pull
+# request must never reach the self-hosted one). The real build and deploy runs on the
+# app-runner in EKS, which has Docker and an IAM role (IRSA) that can only push to this
+# ECR repository and update this ECS service. No AWS keys are stored in GitHub.
+on:
+  pull_request:
+    paths:
+      - dashboard-app/**
+      - .github/workflows/dashboard-image.yml
+  push:
+    branches: [main]
+    paths:
+      - dashboard-app/**
+      - .github/workflows/dashboard-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: eu-west-1
+  AWS_DEFAULT_REGION: eu-west-1
+  ECR_REPOSITORY: printer-dashboard
+  ECS_CLUSTER: printer-dashboard
+  ECS_SERVICE: printer-dashboard
+
+concurrency:
+  group: dashboard-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --platform linux/amd64 -t "$ECR_REPOSITORY:pr" dashboard-app
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, app-runner]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # the runner image may not ship the AWS CLI
+      - name: Ensure AWS CLI
+        run: |
+          if ! command -v aws >/dev/null; then
+            curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+            unzip -q /tmp/awscliv2.zip -d /tmp
+            sudo /tmp/aws/install
+          fi
+          aws sts get-caller-identity
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # the Fargate task is X86_64, so build linux/amd64 explicitly
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          image="$REGISTRY/$ECR_REPOSITORY"
+          docker build --platform linux/amd64 -t "$image:$GITHUB_SHA" -t "$image:latest" dashboard-app
+          docker push "$image:$GITHUB_SHA"
+          docker push "$image:latest"
+
+      # the task definition points at :latest, so a new deployment pulls the fresh image
+      - name: Roll the ECS service
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment >/dev/null
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
