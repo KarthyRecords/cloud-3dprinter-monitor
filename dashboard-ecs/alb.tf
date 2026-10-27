@@ -1,0 +1,95 @@
+# Only the ALB is reachable from outside, and only from var.allowed_cidrs
+resource "aws_security_group" "alb" {
+  name        = "${var.name}-alb"
+  description = "Dashboard load balancer"
+  vpc_id      = data.aws_vpc.main.id
+
+  tags = { Name = "${var.name}-alb" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_http" {
+  for_each = toset(var.allowed_cidrs)
+
+  security_group_id = aws_security_group.alb.id
+  description       = "HTTP from an allowed address"
+  ip_protocol       = "tcp"
+  from_port         = 80
+  to_port           = 80
+  cidr_ipv4         = each.value
+}
+
+# The tasks only accept traffic from the ALB
+resource "aws_security_group" "tasks" {
+  name        = "${var.name}-tasks"
+  description = "Dashboard Fargate tasks"
+  vpc_id      = data.aws_vpc.main.id
+
+  tags = { Name = "${var.name}-tasks" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb" {
+  security_group_id            = aws_security_group.tasks.id
+  description                  = "App port from the ALB"
+  ip_protocol                  = "tcp"
+  from_port                    = var.container_port
+  to_port                      = var.container_port
+  referenced_security_group_id = aws_security_group.alb.id
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_to_tasks" {
+  security_group_id            = aws_security_group.alb.id
+  description                  = "To the tasks"
+  ip_protocol                  = "tcp"
+  from_port                    = var.container_port
+  to_port                      = var.container_port
+  referenced_security_group_id = aws_security_group.tasks.id
+}
+
+# Tasks reach ECR, CloudWatch Logs, DynamoDB and S3 over HTTPS through the NAT gateway
+resource "aws_vpc_security_group_egress_rule" "tasks_https" {
+  security_group_id = aws_security_group.tasks.id
+  description       = "HTTPS to AWS APIs"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
+resource "aws_lb" "dashboard" {
+  name                       = var.name
+  load_balancer_type         = "application"
+  internal                   = false
+  security_groups            = [aws_security_group.alb.id]
+  subnets                    = [for s in data.aws_subnet.public : s.id]
+  drop_invalid_header_fields = true
+}
+
+resource "aws_lb_target_group" "dashboard" {
+  name                 = var.name
+  vpc_id               = data.aws_vpc.main.id
+  port                 = var.container_port
+  protocol             = "HTTP"
+  target_type          = "ip" # required for Fargate (awsvpc)
+  deregistration_delay = 10
+
+  health_check {
+    path                = "/healthz"
+    matcher             = "200"
+    interval            = 15
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+}
+
+# HTTP only for now: HTTPS needs a domain and certificate (the Cloudflare / ACM step)
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.dashboard.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.dashboard.arn
+  }
+}

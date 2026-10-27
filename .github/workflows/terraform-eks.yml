@@ -1,9 +1,9 @@
 name: terraform
 
-# Pull request: terraform plan for every stack the PR changes.
-# Merge to main: plan, then apply for every changed stack after approval
-# (apply uses the "production" environment; add required reviewers in
-# Settings -> Environments -> production).
+# Pull request: terraform plan for every stack the PR changes (no approval needed).
+# Merge to main: plan, then apply, in the same job, for every changed stack. The job waits for
+# approval first (the "production" environment; add required reviewers in
+# Settings -> Environments -> production), so read the plan on the pull request before merging.
 # Manual run: plans the chosen stack (or all). It applies only if "apply" is ticked
 # and the run is on main; the apply still waits for the same approval.
 #
@@ -14,6 +14,7 @@ on:
       - Network/**
       - eks-cluster-for-selfhosted-runner/**
       - iot-ingest/**
+      - dashboard-ecs/**
       - .github/workflows/terraform-eks.yml
   push:
     branches: [main]
@@ -21,6 +22,7 @@ on:
       - Network/**
       - eks-cluster-for-selfhosted-runner/**
       - iot-ingest/**
+      - dashboard-ecs/**
       - .github/workflows/terraform-eks.yml
   workflow_dispatch:
     inputs:
@@ -33,6 +35,7 @@ on:
           - Network
           - eks-cluster-for-selfhosted-runner
           - iot-ingest
+          - dashboard-ecs
       apply:
         description: Also apply after planning (waits for approval). Leave off to plan only.
         type: boolean
@@ -59,6 +62,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       stacks: ${{ steps.pick.outputs.stacks }}
+      apply: ${{ steps.pick.outputs.apply }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,9 +75,11 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.sha }}
           REQUESTED: ${{ inputs.stack }}
+          APPLY_INPUT: ${{ inputs.apply }}
+          REF: ${{ github.ref }}
         run: |
           # apply order: network first, then the cluster, then what runs on top
-          ALL='["Network","eks-cluster-for-selfhosted-runner","iot-ingest"]'
+          ALL='["Network","eks-cluster-for-selfhosted-runner","iot-ingest","dashboard-ecs"]'
 
           if [ "$EVENT" = "workflow_dispatch" ]; then
             if [ "$REQUESTED" = "all" ]; then
@@ -104,8 +110,20 @@ jobs:
             fi
           fi
 
+          # apply only from main: on a merge, or on a manual run with the apply box ticked
+          apply=false
+          if [ "$REF" = "refs/heads/main" ] && [ "$stacks" != "[]" ]; then
+            if [ "$EVENT" = "push" ]; then
+              apply=true
+            elif [ "$EVENT" = "workflow_dispatch" ] && [ "$APPLY_INPUT" = "true" ]; then
+              apply=true
+            fi
+          fi
+
           echo "Stacks to run: $stacks"
+          echo "Apply: $apply"
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
+          echo "apply=$apply" >> "$GITHUB_OUTPUT"
 
   # Fast, credential-free checks on a GitHub-hosted runner: formatting and validation.
   # A failure here fails the PR before anything is planned.
@@ -139,13 +157,19 @@ jobs:
       - name: Validate
         run: terraform validate
 
-  plan:
+  # Plan and apply for each stack in one job. Stacks run one at a time, in the order listed in the
+  # detect job, so a later stack sees what the earlier one just created.
+  terraform:
     needs: [detect, validate]
     if: needs.detect.outputs.stacks != '[]'
     runs-on: [self-hosted, infra-runner]
-    timeout-minutes: 30
+    timeout-minutes: 60
+    # Only a run that will apply waits for approval. A plain plan uses the "plan" environment,
+    # which has no reviewers (GitHub creates it on first use).
+    environment: ${{ needs.detect.outputs.apply == 'true' && 'production' || 'plan' }}
     strategy:
-      fail-fast: false
+      max-parallel: 1
+      fail-fast: ${{ needs.detect.outputs.apply == 'true' }}
       matrix:
         stack: ${{ fromJSON(needs.detect.outputs.stacks) }}
     defaults:
@@ -169,42 +193,9 @@ jobs:
           aws sts get-caller-identity
 
       - run: terraform init
-      - run: terraform plan -lock-timeout=5m
-
-  # Stacks apply one at a time, in the order listed in the detect job.
-  apply:
-    needs: [detect, validate, plan]
-    if: >-
-      needs.detect.outputs.stacks != '[]' &&
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.apply))
-    runs-on: [self-hosted, infra-runner]
-    timeout-minutes: 60
-    environment: production
-    strategy:
-      max-parallel: 1
-      fail-fast: true
-      matrix:
-        stack: ${{ fromJSON(needs.detect.outputs.stacks) }}
-    defaults:
-      run:
-        working-directory: ${{ matrix.stack }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-
-      - name: Ensure AWS CLI
-        run: |
-          if ! command -v aws >/dev/null; then
-            curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-            unzip -q /tmp/awscliv2.zip -d /tmp
-            sudo /tmp/aws/install
-          fi
-
-      - run: terraform init
-      # applying a saved plan file needs no -auto-approve and cannot drift from what was planned
       - run: terraform plan -out=tfplan -lock-timeout=5m
-      - run: terraform apply -lock-timeout=5m tfplan
+
+      # applying the saved plan file needs no -auto-approve and cannot drift from what was just planned
+      - name: Apply
+        if: needs.detect.outputs.apply == 'true'
+        run: terraform apply -lock-timeout=5m tfplan

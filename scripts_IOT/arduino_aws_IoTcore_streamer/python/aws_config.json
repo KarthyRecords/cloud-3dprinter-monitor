@@ -16,9 +16,9 @@
   "stale_after_s": 10,
   "raw_accel": true,
   "raw_block_s": 1.0,
-  "snapshot_interval_s": 30,
+  "snapshot_interval_s": 8,
   "snapshot_max_kb": 120,
-  "snapshot_max_width": 1280,
+  "snapshot_max_width": 640,
   "sensor_names": [
     "table",
     "toolhead"
