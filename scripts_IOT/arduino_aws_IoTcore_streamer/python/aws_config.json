@@ -2,7 +2,7 @@
   "_comment": "Fill in endpoint (AWS IoT Core > Settings > Device data endpoint) and put the 3 cert files in certs/. client_id must match the IoT policy.",
   "enabled": true,
   "dry_run": false,
-  "endpoint": "REPLACE-ME-ats.iot.eu-west-2.amazonaws.com",
+  "endpoint": "axbjkjed5a3zh-ats.iot.eu-west-1.amazonaws.com",
   "port": 8883,
   "client_id": "kobra2neo-unoq",
   "device_id": "kobra2neo",

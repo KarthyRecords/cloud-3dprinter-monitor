@@ -1,4 +1,4 @@
-# printer_monitor_aws_v1 - Linux side
+# printer_monitor_aws_v2 - Linux side
 #
 # Receives accelerometer blocks from the sketch over the Bridge and serves
 # a live web page on port 7001:
@@ -15,6 +15,11 @@
 #   /aws.json      AWS IoT Core publisher state + one example of each message
 #   /settings      app settings: ?cam=480|720|1080 &cam_fps=N &pos_hz=N
 #                  (app-side only - nothing is sent to the printer)
+#
+# aws_v2: web_status is sent to the MCU only while its accel stream is
+#     arriving (data in the last 2 s). Sending while the sketch restarts (Run
+#     in App Lab re-flashes it) could leave a half message in its receive
+#     buffer and hang Bridge.begin() at "1 starting Bridge" until a reboot.
 #
 # aws_v1: everything of v13, plus aws_publisher.py streams the data to AWS
 #     IoT Core (MQTT/TLS, device certificate). Configure aws_config.json and
@@ -143,19 +148,22 @@ Bridge.provide("accel", on_accel)
 
 
 def status_to_mcu():
-    """Tell the MCU we are alive and how many browsers are watching."""
+    """Tell the MCU we are alive and how many browsers are watching -
+    but only while it is streaming, never while it is (re)starting."""
     warned = False
     last_log, last_blocks = time.time(), 0
     while True:
         with lock:
             n = len(clients)
             blocks, lost, odr, mask = stats["blocks"], stats["lost"], stats["odr"], stats["mask"]
-        try:
-            Bridge.notify("web_status", n)
-        except Exception as e:
-            if not warned:
-                print("web_status notify failed:", e, flush=True)
-                warned = True
+            mcu_streaming = stats["last_rx"] and time.time() - stats["last_rx"] < 2.0
+        if mcu_streaming:
+            try:
+                Bridge.notify("web_status", n)
+            except Exception as e:
+                if not warned:
+                    print("web_status notify failed:", e, flush=True)
+                    warned = True
         now = time.time()
         if now - last_log >= 5.0:
             rate = (blocks - last_blocks) / (now - last_log)

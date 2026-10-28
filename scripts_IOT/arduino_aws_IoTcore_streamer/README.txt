@@ -1,4 +1,9 @@
-printer_monitor_aws_v1 - local web page (as v13) + AWS IoT Core publishing
+printer_monitor_aws_v2 - local web page (as v13) + AWS IoT Core publishing
+
+aws_v2 = aws_v1 with one fix in python/main.py: the "web_status" message to
+the sketch is only sent while the sketch is streaming. Sent during a sketch
+restart it could hang the sketch at "1 starting Bridge" until a board reboot.
+Everything else (sketch, AWS publisher, page) is unchanged.
 
 Everything printer_monitor_v13 does, plus python/aws_publisher.py sends the
 data to AWS IoT Core over MQTT/TLS (port 8883) with the board's X.509
@@ -26,7 +31,7 @@ Sketch unchanged from v9; still needs ch340_bridge_v3 on the board.
 
 Install
   1. From PowerShell in ...\arduino_uno_q :
-       scp -r printer_monitor_aws_v1\python\* arduino@192.168.0.42:~/ArduinoApps/3dprinter-dualaccel-camera-oled/python/
+       scp -r printer_monitor_aws_v2\python\* arduino@192.168.0.42:~/ArduinoApps/3dprinter-dualaccel-camera-oled/python/
   2. Stop + Run the app. The first start installs paho-mqtt (needs
      internet, takes a minute). The page's AWS card then says
      "waiting for certificates".
