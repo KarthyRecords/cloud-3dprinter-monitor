@@ -2,8 +2,12 @@
 
 A hands-on DevOps/IoT project to create a cloud based dashboard for our FDM 3D printer:
 1. IoT hardware:
-- [Phase 1] Serial port connection to the printer enabling read/command capability (Anycubic Kobra 2 Neo, Marlin based OEM Firmware)
-- [Phase 2] 2x ADXL345 accelerometers (on extruder and table), USB webcam connected via STM32 (Arduino Uno Q)
+   - Printer Serial port (COM3) connected to Arduino Q via usb hub
+   - 1 USB webcam connected to Arduino Q via usb hub
+   - 1 ADXL345 accelerometer mounted on the table supporting printer
+   - 1 ADXL345 accelerometer mounted on extruder head
+   - 1 0.96 inch dual color oled screen connected to Arduino Q MCU
+
 2. Cloud dashboard:
 AWS EKS cluster built with Terraform, with GitHub Actions self-hosted runners on the cluster that deploy infrastructure and applications. 
 
