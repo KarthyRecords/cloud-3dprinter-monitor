@@ -1,4 +1,4 @@
-# Only the ALB is reachable from outside, and only from var.allowed_cidrs
+# Only the ALB is reachable from outside, and only from CloudFront's origin-facing addresses
 resource "aws_security_group" "alb" {
   name        = "${var.name}-alb"
   description = "Dashboard load balancer"
@@ -7,15 +7,19 @@ resource "aws_security_group" "alb" {
   tags = { Name = "${var.name}-alb" }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "alb_http" {
-  for_each = toset(var.allowed_cidrs)
+# AWS keeps this list current. It counts as ~55 rules against the security group quota
+# (default 60), so keep this group free of other inbound rules.
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
 
+resource "aws_vpc_security_group_ingress_rule" "alb_http" {
   security_group_id = aws_security_group.alb.id
-  description       = "HTTP from an allowed address"
+  description       = "HTTP from CloudFront"
   ip_protocol       = "tcp"
   from_port         = 80
   to_port           = 80
-  cidr_ipv4         = each.value
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
 }
 
 # The tasks only accept traffic from the ALB
@@ -82,13 +86,36 @@ resource "aws_lb_target_group" "dashboard" {
   }
 }
 
-# HTTP only for now: HTTPS needs a domain and certificate (the Cloudflare / ACM step)
+# HTTP between CloudFront and the ALB; viewers always use HTTPS on CloudFront.
+# Anything that did not come through CloudFront (no secret header) gets a 403.
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.dashboard.arn
   port              = 80
   protocol          = "HTTP"
 
   default_action {
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "forbidden"
+      status_code  = "403"
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "from_cloudfront" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 10
+
+  condition {
+    http_header {
+      http_header_name = "X-Origin-Verify"
+      values           = [random_password.origin_verify.result]
+    }
+  }
+
+  action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.dashboard.arn
   }

@@ -41,6 +41,16 @@ resource "aws_ecs_task_definition" "dashboard" {
       { name = "TELEMETRY_TABLE", value = var.telemetry_table },
       { name = "STATE_TABLE", value = var.state_table },
       { name = "DATA_BUCKET", value = local.data_bucket },
+      { name = "AUTH_ENABLED", value = "1" },
+      { name = "PUBLIC_URL", value = "https://${aws_cloudfront_distribution.dashboard.domain_name}" },
+      { name = "COGNITO_DOMAIN", value = "https://${aws_cognito_user_pool_domain.dashboard.domain}.auth.${local.region}.amazoncognito.com" },
+      { name = "COGNITO_CLIENT_ID", value = aws_cognito_user_pool_client.dashboard.id },
+      { name = "COGNITO_USER_POOL_ID", value = aws_cognito_user_pool.dashboard.id },
+    ]
+
+    secrets = [
+      { name = "COGNITO_CLIENT_SECRET", valueFrom = aws_ssm_parameter.client_secret.arn },
+      { name = "SESSION_KEY", valueFrom = aws_ssm_parameter.session_key.arn },
     ]
 
     logConfiguration = {
@@ -75,5 +85,5 @@ resource "aws_ecs_service" "dashboard" {
     container_port   = var.container_port
   }
 
-  depends_on = [aws_lb_listener.http]
+  depends_on = [aws_lb_listener_rule.from_cloudfront]
 }

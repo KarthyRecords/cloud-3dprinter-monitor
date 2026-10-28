@@ -4,12 +4,6 @@ variable "name" {
   default     = "printer-dashboard"
 }
 
-variable "allowed_cidrs" {
-  description = "Who may reach the ALB on port 80. The dashboard has no login yet, so keep this to your own IP."
-  type        = list(string)
-  default     = ["90.196.238.220/32"]
-}
-
 variable "container_port" {
   type    = number
   default = 8080
@@ -54,4 +48,10 @@ variable "state_table" {
 variable "log_retention_days" {
   type    = number
   default = 14
+}
+
+variable "admin_email" {
+  description = "Gets an email with an approval link whenever someone registers for the dashboard"
+  type        = string
+  default     = "karthikasankaran19@gmail.com"
 }

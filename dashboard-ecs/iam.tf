@@ -63,3 +63,21 @@ resource "aws_iam_role_policy" "task" {
   role   = aws_iam_role.task.id
   policy = data.aws_iam_policy_document.task.json
 }
+
+# Lets ECS inject the two SecureString parameters into the container at start-up
+data "aws_iam_policy_document" "execution_secrets" {
+  statement {
+    sid     = "ReadDashboardSecrets"
+    actions = ["ssm:GetParameters"]
+    resources = [
+      aws_ssm_parameter.client_secret.arn,
+      aws_ssm_parameter.session_key.arn,
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "execution_secrets" {
+  name   = "read-dashboard-secrets"
+  role   = aws_iam_role.execution.id
+  policy = data.aws_iam_policy_document.execution_secrets.json
+}

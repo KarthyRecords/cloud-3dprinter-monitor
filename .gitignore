@@ -25,3 +25,6 @@
 # local python envs
 .venv/
 __pycache__/
+
+## Lambda zips built by terraform
+**/.build/
