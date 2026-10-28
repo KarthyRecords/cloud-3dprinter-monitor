@@ -5,13 +5,21 @@ AWS credentials. Read-only. Run it on your laptop; it listens on localhost only.
 
     python app.py            # then open http://127.0.0.1:8080
 """
+import base64
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import time
+import urllib.parse
+import urllib.request
 from decimal import Decimal
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import boto3
+import jwt
 from boto3.dynamodb.conditions import Key
 from botocore.config import Config
 
@@ -30,6 +38,77 @@ session = boto3.Session(region_name=REGION)
 ddb = session.resource("dynamodb")
 # SigV4 presigned URLs also work with the temporary credentials of an ECS task role
 s3 = session.client("s3", config=Config(signature_version="s3v4"))
+
+# Cognito login. Off for a laptop run; the ECS task sets AUTH_ENABLED=1 and the rest.
+AUTH_ENABLED = os.environ.get("AUTH_ENABLED") == "1"
+SESSION_SECONDS = 3600
+if AUTH_ENABLED:
+    PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")  # https://<id>.cloudfront.net
+    COGNITO_DOMAIN = os.environ["COGNITO_DOMAIN"].rstrip("/")
+    CLIENT_ID = os.environ["COGNITO_CLIENT_ID"]
+    CLIENT_SECRET = os.environ["COGNITO_CLIENT_SECRET"]
+    SESSION_KEY = os.environ["SESSION_KEY"].encode()
+    ISSUER = "https://cognito-idp.%s.amazonaws.com/%s" % (REGION, os.environ["COGNITO_USER_POOL_ID"])
+    jwks = jwt.PyJWKClient(ISSUER + "/.well-known/jwks.json")  # caches the signing keys
+
+
+def sign(value):
+    return hmac.new(SESSION_KEY, value.encode(), hashlib.sha256).hexdigest()
+
+
+def make_session(email, lifetime=SESSION_SECONDS):
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"email": email, "exp": int(time.time()) + lifetime}).encode()
+    ).decode()
+    return payload + "." + sign(payload)
+
+
+def read_session(value):
+    """The session dict if the cookie is genuine and not expired, else None."""
+    try:
+        payload, sig = value.rsplit(".", 1)
+        if not hmac.compare_digest(sig, sign(payload)):
+            return None
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        return data if data["exp"] > time.time() else None
+    except Exception:
+        return None
+
+
+def exchange_code(code):
+    """Swap the one-time login code for tokens, server to server, with the client secret."""
+    body = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": CLIENT_ID,
+        "redirect_uri": PUBLIC_URL + "/callback",
+    }).encode()
+    basic = base64.b64encode(("%s:%s" % (CLIENT_ID, CLIENT_SECRET)).encode()).decode()
+    req = urllib.request.Request(
+        COGNITO_DOMAIN + "/oauth2/token",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": "Basic " + basic},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.load(resp)
+
+
+def verify_id_token(token):
+    """Signature, issuer, audience and expiry are all checked by PyJWT."""
+    key = jwks.get_signing_key_from_jwt(token).key
+    claims = jwt.decode(token, key, algorithms=["RS256"], audience=CLIENT_ID, issuer=ISSUER)
+    if claims.get("token_use") != "id":
+        raise ValueError("not an ID token")
+    return claims
+
+
+NOT_APPROVED = b"""<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waiting for approval</title>
+<body style="font:16px system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px">
+<h1>Waiting for approval</h1>
+<p>Your account is registered, but it has not been approved for this dashboard yet.
+Once it is, sign in again.</p>
+<p><a href="/logout">Sign out</a></p></body>"""
 
 
 def clean(value):
@@ -131,7 +210,7 @@ th{color:var(--mute);font-weight:500}
 .ok{color:var(--ok)}.bad{color:var(--bad)}img{max-width:100%;border-radius:6px}
 .err{color:var(--bad);white-space:pre-wrap}
 </style></head><body><main>
-<h1>Printer monitor</h1>
+<h1>Printer monitor <a href="/logout" style="float:right;font-size:13px;font-weight:400;color:var(--mute)">Sign out</a></h1>
 <div class="sub" id="sub">loading…</div>
 <div class="grid">
   <div class="card"><h2>Status</h2><div id="status"></div></div>
@@ -217,7 +296,9 @@ function charts(d){
 }
 async function tick(){
   try{
-    const d=await (await fetch('/api/data')).json();
+    const r=await fetch('/api/data');
+    if(r.status===401){location.href='/login';return}
+    const d=await r.json();
     document.getElementById('sub').textContent=d.device+' · '+d.region+' · updated '+new Date().toLocaleTimeString();
     const st=d.state&&d.state.status;
     document.getElementById('status').innerHTML=st
@@ -250,22 +331,106 @@ tick();setInterval(tick,3000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/api/data":
-            body, ctype = json.dumps(collect()).encode(), "application/json"
-        elif self.path in ("/", "/index.html"):
-            body, ctype = PAGE.encode(), "text/html; charset=utf-8"
-        elif self.path == "/healthz":  # ALB health check: must not depend on AWS calls
-            body, ctype = b"ok", "text/plain"
-        else:
-            self.send_error(404)
-            return
-        self.send_response(200)
+    def send(self, status, body, ctype, cookies=(), location=None):
+        self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if location:
+            self.send_header("Location", location)
+        for c in cookies:
+            self.send_header("Set-Cookie", c)
         self.end_headers()
         self.wfile.write(body)
+
+    def redirect(self, location, cookies=()):
+        self.send(302, b"", "text/plain", cookies, location)
+
+    def cookie(self, name):
+        jar = SimpleCookie(self.headers.get("Cookie", ""))
+        return jar[name].value if name in jar else None
+
+    def session(self):
+        value = self.cookie("session")
+        return read_session(value) if value else None
+
+    # login flow ------------------------------------------------------------------
+    def login(self):
+        state_value = secrets.token_urlsafe(24)
+        query = urllib.parse.urlencode({
+            "response_type": "code",
+            "client_id": CLIENT_ID,
+            "redirect_uri": PUBLIC_URL + "/callback",
+            "scope": "openid email",
+            "state": state_value,
+        })
+        # the same value must come back in the callback: proves this browser started the login
+        cookie = "oauth_state=%s; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax" % state_value
+        self.redirect(COGNITO_DOMAIN + "/oauth2/authorize?" + query, [cookie])
+
+    def callback(self, query):
+        params = urllib.parse.parse_qs(query)
+        code = params.get("code", [""])[0]
+        returned = params.get("state", [""])[0]
+        expected = self.cookie("oauth_state") or ""
+        clear_state = "oauth_state=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
+        if not code or not expected or not hmac.compare_digest(returned, expected):
+            self.send(400, b"login failed, please try again: /login", "text/plain", [clear_state])
+            return
+        try:
+            claims = verify_id_token(exchange_code(code)["id_token"])
+        except Exception as exc:
+            print("login rejected: %r" % exc, flush=True)
+            self.send(400, b"login failed, please try again: /login", "text/plain", [clear_state])
+            return
+        if "approved" not in claims.get("cognito:groups", []):
+            print("not approved: %s" % claims.get("email"), flush=True)
+            self.send(403, NOT_APPROVED, "text/html; charset=utf-8", [clear_state])
+            return
+        session = "session=%s; Path=/; Max-Age=%d; HttpOnly; Secure; SameSite=Lax" % (
+            make_session(claims.get("email", "?")), SESSION_SECONDS)
+        self.redirect("/", [clear_state, session])
+
+    def logout(self):
+        clear = "session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
+        if not AUTH_ENABLED:
+            self.redirect("/", [clear])
+            return
+        query = urllib.parse.urlencode({"client_id": CLIENT_ID, "logout_uri": PUBLIC_URL + "/"})
+        self.redirect(COGNITO_DOMAIN + "/logout?" + query, [clear])
+
+    # routes ----------------------------------------------------------------------
+    def do_GET(self):
+        url = urllib.parse.urlsplit(self.path)
+        path = url.path
+        if path == "/healthz":  # ALB health check: must not depend on AWS calls or login
+            self.send(200, b"ok", "text/plain")
+            return
+        if path == "/logout":
+            self.logout()
+            return
+        if AUTH_ENABLED:
+            if path == "/login":
+                self.login()
+                return
+            if path == "/callback":
+                self.callback(url.query)
+                return
+            if not self.session():
+                if path == "/api/data":
+                    self.send(401, b'{"error": "login required"}', "application/json")
+                elif path in ("/", "/index.html"):
+                    self.redirect("/login")
+                else:
+                    self.send_error(404)
+                return
+        if path == "/api/data":
+            self.send(200, json.dumps(collect()).encode(), "application/json")
+        elif path in ("/", "/index.html"):
+            self.send(200, PAGE.encode(), "text/html; charset=utf-8")
+        else:
+            self.send_error(404)
 
     def log_message(self, *args):
         pass

@@ -127,13 +127,14 @@ resource "kubectl_manifest" "app_runner_node_pool" {
           }
           taints = [{ key = "dedicated", value = "app-runner", effect = "NoSchedule" }]
           requirements = [
-            # t3.medium (4 GiB): an image build plus the Docker daemon does not fit on a t3.small
-            { key = "node.kubernetes.io/instance-type", operator = "In", values = ["t3.medium"] },
+            # c7i-flex.large (4 GiB): an image build plus the Docker daemon does not fit on a t3.small,
+            # and t3.medium is not Free Tier eligible
+            { key = "node.kubernetes.io/instance-type", operator = "In", values = ["c7i-flex.large"] },
             { key = "karpenter.sh/capacity-type", operator = "In", values = ["on-demand"] },
           ]
         }
       }
-      limits = { cpu = "4" } # max 2 x t3.medium
+      limits = { cpu = "4" } # max 2 x c7i-flex.large
       disruption = {
         consolidationPolicy = "WhenEmpty"
         consolidateAfter    = "2m"
